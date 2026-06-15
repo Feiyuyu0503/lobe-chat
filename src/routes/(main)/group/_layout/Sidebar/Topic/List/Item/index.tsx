@@ -1,14 +1,20 @@
 import type { ChatTopicStatus } from '@lobechat/types';
-import { Flexbox, Icon, Skeleton, Tag } from '@lobehub/ui';
+import { Flexbox, Icon, Skeleton, Tag, Tooltip } from '@lobehub/ui';
 import { createStaticStyles, cssVar } from 'antd-style';
-import { CheckCircle2, Hand, HashIcon, Loader2Icon, MessageSquareDashed } from 'lucide-react';
+import {
+  CheckCircle2,
+  Hand,
+  HashIcon,
+  Loader2Icon,
+  MessageSquareDashed,
+  TriangleAlert,
+} from 'lucide-react';
 import { AnimatePresence, m } from 'motion/react';
 import { memo, Suspense, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import DotsLoading from '@/components/DotsLoading';
 import { isDesktop } from '@/const/version';
-import { pluginRegistry } from '@/features/Electron/titlebar/RecentlyViewed/plugins';
 import NavItem from '@/features/NavPanel/components/NavItem';
 import { useFocusTopicPopup } from '@/features/TopicPopupGuard/useTopicPopupsRegistry';
 import { useAgentGroupStore } from '@/store/agentGroup';
@@ -60,7 +66,7 @@ const styles = createStaticStyles(({ css }) => ({
 
 // Module-scoped so a click on any topic cancels a pending click on another.
 // Per-item refs can't do that, which lets rapid clicks across items all
-// fire — each racing to write activeTopicId (see LOBE-7785).
+// fire — each racing to write activeTopicId (see ).
 let pendingSingleClickTimer: ReturnType<typeof setTimeout> | null = null;
 
 const cancelPendingSingleClick = () => {
@@ -137,12 +143,9 @@ const TopicItem = memo<TopicItemProps>(({ id, title, fav, active, threadId, stat
       toggleMobileTopic(false);
       return;
     }
-    const reference = pluginRegistry.parseUrl(`/group/${activeGroupId}`, `topic=${id}`);
-    if (reference) {
-      addTab(reference);
-      switchTopic(id);
-      toggleMobileTopic(false);
-    }
+    addTab(`/group/${activeGroupId}?topic=${id}`);
+    switchTopic(id);
+    toggleMobileTopic(false);
   }, [id, activeGroupId, addTab, focusTopicPopup, switchTopic, toggleMobileTopic]);
 
   const dropdownMenu = useTopicItemDropdownMenu({
@@ -152,6 +155,7 @@ const TopicItem = memo<TopicItemProps>(({ id, title, fav, active, threadId, stat
   });
 
   const isCompleted = status === 'completed';
+  const isFailed = status === 'failed';
   const isRunning = status === 'running';
   const isWaitingForHuman = status === 'waitingForHuman';
 
@@ -202,6 +206,7 @@ const TopicItem = memo<TopicItemProps>(({ id, title, fav, active, threadId, stat
     return (
       <NavItem
         active={active}
+        titleColor={cssVar.colorText}
         icon={
           isLoading ? (
             <Icon spin color={cssVar.colorWarning} icon={Loader2Icon} size={'small'} />
@@ -237,13 +242,21 @@ const TopicItem = memo<TopicItemProps>(({ id, title, fav, active, threadId, stat
         disabled={editing}
         href={!editing ? href : undefined}
         title={title === '...' ? <DotsLoading gap={3} size={4} /> : title}
+        titleColor={cssVar.colorText}
         icon={(() => {
           if (isWaitingForHuman) {
-            return <Icon icon={Hand} size={'small'} style={{ color: cssVar.colorWarning }} />;
+            return <Icon icon={Hand} size={'small'} style={{ color: cssVar.colorInfo }} />;
           }
           if (isLoading || isRunning) {
             return (
               <Icon spin icon={Loader2Icon} size={'small'} style={{ color: cssVar.colorWarning }} />
+            );
+          }
+          if (isFailed) {
+            return (
+              <Tooltip title={t('failedStatusTip')}>
+                <Icon icon={TriangleAlert} size={'small'} style={{ color: cssVar.colorError }} />
+              </Tooltip>
             );
           }
           if (isCompleted) {

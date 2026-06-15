@@ -3,13 +3,15 @@
 import type { EvalThreadResult } from '@lobechat/types';
 import { formatCost, formatShortenNumber } from '@lobechat/utils';
 import { ActionIcon, Flexbox, Icon, Tag } from '@lobehub/ui';
-import { Badge, Input, Select, Table, Tooltip } from 'antd';
+import { Select } from '@lobehub/ui/base-ui';
+import { Badge, Input, Table, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { createStaticStyles, cssVar } from 'antd-style';
 import { Footprints, Play, RotateCcw } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
+
+import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
 
 import { getResumeTarget } from '../resumeTarget';
 
@@ -234,12 +236,12 @@ const CaseResultsTable = memo<CaseResultsTableProps>(
           dataIndex: ['testCase', 'content', 'input'],
           key: 'input',
           render: (text: string, record: any) => (
-            <Link
+            <WorkspaceLink
               className={styles.caseLink}
               to={`/eval/bench/${benchmarkId}/runs/${runId}/cases/${record.testCaseId}`}
             >
               {text}
-            </Link>
+            </WorkspaceLink>
           ),
           title: t('table.columns.input'),
         },

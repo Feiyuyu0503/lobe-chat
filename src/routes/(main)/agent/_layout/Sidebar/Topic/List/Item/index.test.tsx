@@ -3,11 +3,12 @@
  */
 import { render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import TopicItem from './index';
 
 const useTopicNavigationMock = vi.hoisted(() => vi.fn());
+const runningStartTimeMock = vi.hoisted(() => ({ value: undefined as number | undefined }));
 
 vi.mock('@lobehub/ui', () => ({
   Flexbox: ({ children, ...props }: { children?: ReactNode; [key: string]: unknown }) => (
@@ -25,13 +26,6 @@ vi.mock('antd-style', () => ({
     dotContainer: 'dotContainer',
     neonDot: 'neonDot',
     neonDotWrapper: 'neonDotWrapper',
-  }),
-  createStyles: () => () => ({
-    cx: (...classNames: Array<false | string | undefined>) => classNames.filter(Boolean).join(' '),
-    styles: {
-      container: 'container',
-      dot: 'dot',
-    },
   }),
   cssVar: {
     colorInfo: '#00f',
@@ -63,15 +57,26 @@ vi.mock('@/const/version', () => ({ isDesktop: false }));
 vi.mock('@/const/url', () => ({
   SESSION_CHAT_TOPIC_URL: (agentId: string, topicId: string) => `/agent/${agentId}/${topicId}`,
 }));
-vi.mock('@/features/Electron/titlebar/RecentlyViewed/plugins', () => ({
-  pluginRegistry: { parseUrl: vi.fn() },
-}));
 vi.mock('@/features/NavPanel/components/NavItem', () => ({
-  default: ({ active, title }: { active?: boolean; title?: ReactNode }) => (
-    <div data-active={String(active)} data-testid="nav-item">
+  default: ({
+    active,
+    extra,
+    href,
+    title,
+  }: {
+    active?: boolean;
+    extra?: ReactNode;
+    href?: string;
+    title?: ReactNode;
+  }) => (
+    <div data-active={String(active)} data-href={href} data-testid="nav-item">
       {title}
+      {extra}
     </div>
   ),
+}));
+vi.mock('@/business/client/hooks/useActiveWorkspaceSlug', () => ({
+  useActiveWorkspaceSlug: () => 'team',
 }));
 vi.mock('@/routes/(main)/agent/channel/const', () => ({
   getPlatformIcon: () => null,
@@ -90,6 +95,7 @@ vi.mock('@/store/chat', () => ({
 }));
 vi.mock('@/store/chat/selectors', () => ({
   operationSelectors: {
+    getAgentRuntimeStartTimeByContext: () => () => runningStartTimeMock.value,
     isTopicUnreadCompleted: () => () => false,
   },
 }));
@@ -116,6 +122,11 @@ vi.mock('../../TopicListContent/ThreadList', () => ({
 }));
 
 describe('TopicItem active state', () => {
+  afterEach(() => {
+    runningStartTimeMock.value = undefined;
+    vi.useRealTimers();
+  });
+
   it('keeps the current topic highlighted on topic page sub-routes', () => {
     useTopicNavigationMock.mockReturnValue({
       isInAgentSubRoute: true,
@@ -143,5 +154,38 @@ describe('TopicItem active state', () => {
 
     expect(screen.getByTestId('nav-item')).toHaveAttribute('data-active', 'false');
     expect(screen.queryByTestId('topic-thread-list')).not.toBeInTheDocument();
+  });
+
+  it('prefixes the cmd-click href with the active workspace slug', () => {
+    useTopicNavigationMock.mockReturnValue({
+      isInAgentSubRoute: false,
+      isInTopicContextRoute: false,
+      navigateToTopic: vi.fn(),
+      routeTopicId: undefined,
+    });
+
+    render(<TopicItem id="tpc_test" title="Topic" />);
+
+    expect(screen.getByTestId('nav-item')).toHaveAttribute(
+      'data-href',
+      '/team/agent/agt_test/tpc_test',
+    );
+  });
+
+  it('shows running elapsed time in the nav item extra slot', () => {
+    vi.useFakeTimers();
+    const now = Date.UTC(2026, 0, 1, 0, 0, 33);
+    vi.setSystemTime(now);
+    runningStartTimeMock.value = now - 33_000;
+    useTopicNavigationMock.mockReturnValue({
+      isInAgentSubRoute: false,
+      isInTopicContextRoute: false,
+      navigateToTopic: vi.fn(),
+      routeTopicId: undefined,
+    });
+
+    render(<TopicItem id="tpc_test" status="running" title="Topic" />);
+
+    expect(screen.getByText('00:33')).toBeInTheDocument();
   });
 });

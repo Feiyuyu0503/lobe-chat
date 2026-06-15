@@ -51,9 +51,11 @@ export const params = {
       const modalities =
         (payload as any).modalities ?? (isImageModel ? ['image', 'text'] : undefined);
 
-      // Map imageResolution to image_size: '512px' → '0.5K', others pass through
+      // Map imageResolution to image_size: '512' → '0.5K', others pass through.
+      // OpenRouter's image_size field expects '0.5K' for 512px output; the rest
+      // ('1K'/'2K'/'4K') are passed through verbatim.
       const imageSizeValue = imageResolution
-        ? imageResolution === '512px'
+        ? imageResolution === '512'
           ? '0.5K'
           : imageResolution
         : undefined;
@@ -91,18 +93,13 @@ export const params = {
     chatCompletion: () => process.env.DEBUG_OPENROUTER_CHAT_COMPLETION === '1',
   },
   models: async () => {
-    let modelList: OpenRouterModelCard[] = [];
-
-    try {
-      const response = await fetch('https://openrouter.ai/api/v1/models');
-      if (response.ok) {
-        const data = await response.json();
-        modelList = data['data'];
-      }
-    } catch (error) {
-      console.error('Failed to fetch OpenRouter frontend models:', error);
-      return [];
+    const response = await fetch('https://openrouter.ai/api/v1/models');
+    if (!response.ok) {
+      throw new Error(`OpenRouter models API request failed with status ${response.status}`);
     }
+
+    const data = (await response.json()) as { data: OpenRouterModelCard[] };
+    const modelList = data.data;
 
     // Process the model info fetched from the frontend and convert to standard format
     const formattedModels = modelList.map((model) => {

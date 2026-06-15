@@ -46,7 +46,9 @@ vi.mock('@/features/ExplorerTree', () => {
   MockExplorerTree.displayName = 'MockExplorerTree';
   return {
     ExplorerTree: MockExplorerTree,
-    FOLDER_ICON_CSS: '',
+    FOLDER_ICON_CSS: 'folder-css',
+    HIDE_POINTER_FOCUS_RING_CSS: 'hide-pointer-focus-ring-css',
+    getExplorerTreeStyleVars: () => ({}),
   };
 });
 
@@ -164,6 +166,7 @@ describe('Files — reveal request integration', () => {
       { path: 'src/foo/bar.ts', status: 'modified' },
       { path: 'deleted.ts', status: 'deleted' },
     ]);
+    expect(explorerTreeProps.current?.unsafeCSS).toBe('folder-css\nhide-pointer-focus-ring-css');
 
     const nodes = explorerTreeProps.current?.nodes as { id: string }[];
     const dirtyNode = nodes.find((node) => node.id === 'src/foo/bar.ts');
@@ -250,15 +253,15 @@ describe('Files — reveal request integration', () => {
     expect(messageSpy.warning).not.toHaveBeenCalled();
   });
 
-  it('(b) missing path triggers message.warning with localized key', async () => {
+  it('(b) missing path is a silent no-op', async () => {
     render(<Files workingDirectory="/repo" />);
 
     setReveal('nonexistent/deep/file.ts', 1);
 
-    await vi.waitFor(() => {
-      expect(messageSpy.warning).toHaveBeenCalledWith('workingPanel.review.revealNotFound');
-    });
+    // Give the effect a tick to run so we can assert nothing happened.
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(messageSpy.warning).not.toHaveBeenCalled();
     expect(handleSpies.setExpanded).not.toHaveBeenCalled();
     expect(handleSpies.select).not.toHaveBeenCalled();
     expect(handleSpies.focus).not.toHaveBeenCalled();

@@ -54,30 +54,32 @@
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@electron-toolkit/utils": "^4.0.0",
+    "@lobechat/chat-adapter-imessage": "workspace:*",
     "@lobechat/desktop-bridge": "workspace:*",
+    "@lobechat/device-control": "workspace:*",
     "@lobechat/device-gateway-client": "workspace:*",
+    "@lobechat/device-identity": "workspace:*",
     "@lobechat/electron-client-ipc": "workspace:*",
     "@lobechat/electron-server-ipc": "workspace:*",
     "@lobechat/file-loaders": "workspace:*",
     "@lobechat/heterogeneous-agents": "workspace:*",
     "@lobechat/local-file-shell": "workspace:*",
+    "@lobechat/tool-runtime": "workspace:*",
     "@lobehub/i18n-cli": "^1.25.1",
     "@modelcontextprotocol/sdk": "^1.24.3",
     "@t3-oss/env-core": "^0.13.8",
-    "@types/async-retry": "^1.4.9",
     "@types/resolve": "^1.20.6",
     "@types/semver": "^7.7.1",
     "@types/set-cookie-parser": "^2.4.10",
     "@typescript/native-preview": "7.0.0-dev.20251210.1",
     "@vanilla-extract/css": "^1.17.4",
     "@vanilla-extract/vite-plugin": "^5.1.0",
-    "async-retry": "^1.3.3",
     "consola": "^3.4.2",
     "cookie": "^1.1.1",
     "cross-env": "^10.1.0",
     "diff": "^8.0.4",
     "electron": "41.3.0",
-    "electron-builder": "^26.8.1",
+    "electron-builder": "26.14.0",
     "electron-devtools-installer": "4.0.0",
     "electron-is": "^3.0.0",
     "electron-store": "^8.2.0",
@@ -106,11 +108,11 @@
     "stylelint": "^15.11.0",
     "superjson": "^2.2.6",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
+    "typescript": "^6.0.3",
     "undici": "^7.16.0",
     "uuid": "^14.0.0",
-    "vite": "8.0.12",
-    "vitest": "^3.2.4",
+    "vite": "8.0.14",
+    "vitest": "3.2.6",
     "zod": "^3.25.76"
   },
   "optionalDependencies": {
@@ -124,8 +126,10 @@
       "node-mac-permissions"
     ],
     "overrides": {
+      "node-gyp": "^12.4.0",
       "react": "19.2.4",
-      "react-dom": "19.2.4"
+      "react-dom": "19.2.4",
+      "vitest": "3.2.6"
     }
   }
 }

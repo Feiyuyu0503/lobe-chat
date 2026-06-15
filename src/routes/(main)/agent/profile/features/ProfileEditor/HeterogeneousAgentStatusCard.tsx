@@ -2,28 +2,32 @@
 
 import { isDesktop } from '@lobechat/const';
 import { type ClaudeAuthStatus, type ToolStatus } from '@lobechat/electron-client-ipc';
-import { getHeterogeneousAgentClientConfig } from '@lobechat/heterogeneous-agents/client';
+import {
+  getHeterogeneousAgentClientConfig,
+  isRemoteHeterogeneousType,
+} from '@lobechat/heterogeneous-agents/client';
 import type { HeterogeneousProviderConfig } from '@lobechat/types';
 import { ActionIcon, CopyButton, Flexbox, Icon, Input, Tag, Text, Tooltip } from '@lobehub/ui';
-import { createStyles } from 'antd-style';
+import { createStaticStyles, cssVar } from 'antd-style';
 import { Loader2Icon, PencilLine, RefreshCw, XCircle } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
 
 import HeterogeneousAgentStatusGuide from '@/features/Electron/HeterogeneousAgent/StatusGuide';
+import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
+import { usePermission } from '@/hooks/usePermission';
 import { toolDetectorService } from '@/services/electron/toolDetector';
 
 const COMMAND_LINE_HEIGHT = 28;
 
-const useStyles = createStyles(({ css, token }) => ({
+const styles = createStaticStyles(({ css }) => ({
   card: css`
     padding-block: 16px 4px;
     padding-inline: 16px;
-    border: 1px solid ${token.colorBorderSecondary};
-    border-radius: ${token.borderRadiusLG}px;
+    border: 1px solid ${cssVar.colorBorderSecondary};
+    border-radius: ${cssVar.borderRadiusLG};
 
-    background: ${token.colorBgContainer};
+    background: ${cssVar.colorBgContainer};
   `,
   cardHeader: css`
     display: flex;
@@ -54,7 +58,7 @@ const useStyles = createStyles(({ css, token }) => ({
   `,
   metaText: css`
     font-size: 13px;
-    color: ${token.colorTextSecondary};
+    color: ${cssVar.colorTextSecondary};
   `,
   pathWrap: css`
     display: flex;
@@ -66,7 +70,7 @@ const useStyles = createStyles(({ css, token }) => ({
   `,
   detailList: css`
     margin-block-start: 4px;
-    border-block-start: 1px solid ${token.colorBorderSecondary};
+    border-block-start: 1px solid ${cssVar.colorBorderSecondary};
   `,
   detailRow: css`
     display: flex;
@@ -77,7 +81,7 @@ const useStyles = createStyles(({ css, token }) => ({
     padding-block: 8px;
 
     & + & {
-      border-block-start: 1px solid ${token.colorBorderSecondary};
+      border-block-start: 1px solid ${cssVar.colorBorderSecondary};
     }
   `,
   detailLabel: css`
@@ -86,7 +90,7 @@ const useStyles = createStyles(({ css, token }) => ({
     width: 96px;
 
     font-size: 12px;
-    color: ${token.colorTextTertiary};
+    color: ${cssVar.colorTextTertiary};
     text-transform: uppercase;
     letter-spacing: 0.04em;
   `,
@@ -108,7 +112,7 @@ const useStyles = createStyles(({ css, token }) => ({
   `,
   commandInput: css`
     width: 100%;
-    font-family: ${token.fontFamilyCode};
+    font-family: ${cssVar.fontFamilyCode};
 
     &,
     &.ant-input,
@@ -124,7 +128,7 @@ const useStyles = createStyles(({ css, token }) => ({
       max-height: ${COMMAND_LINE_HEIGHT}px;
       border-radius: 999px !important;
 
-      font-family: ${token.fontFamilyCode};
+      font-family: ${cssVar.fontFamilyCode};
       font-size: 14px;
       line-height: ${COMMAND_LINE_HEIGHT - 2}px;
     }
@@ -171,10 +175,10 @@ const useStyles = createStyles(({ css, token }) => ({
     height: ${COMMAND_LINE_HEIGHT}px;
     padding-block: 0;
     padding-inline: 12px;
-    border: 1px solid ${token.colorBorderSecondary};
+    border: 1px solid ${cssVar.colorBorderSecondary};
     border-radius: 999px;
 
-    background: ${token.colorFillSecondary};
+    background: ${cssVar.colorFillSecondary};
   `,
   commandEditButton: css`
     pointer-events: none;
@@ -184,23 +188,23 @@ const useStyles = createStyles(({ css, token }) => ({
   commandText: css`
     min-width: 0;
 
-    font-family: ${token.fontFamilyCode};
+    font-family: ${cssVar.fontFamilyCode};
     font-size: 14px;
     line-height: 20px;
-    color: ${token.colorText};
+    color: ${cssVar.colorText};
   `,
   accountValue: css`
     font-size: 15px;
-    color: ${token.colorText};
+    color: ${cssVar.colorText};
   `,
   path: css`
-    font-family: ${token.fontFamilyCode};
+    font-family: ${cssVar.fontFamilyCode};
     font-size: 12px;
-    color: ${token.colorTextTertiary};
+    color: ${cssVar.colorTextTertiary};
   `,
   unavailableText: css`
     font-size: 13px;
-    color: ${token.colorTextSecondary};
+    color: ${cssVar.colorTextSecondary};
   `,
 }));
 
@@ -212,8 +216,8 @@ interface HeterogeneousAgentStatusCardProps {
 const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
   ({ provider, onCommandChange }) => {
     const { t } = useTranslation('setting');
-    const { styles } = useStyles();
-    const navigate = useNavigate();
+    const navigate = useWorkspaceAwareNavigate();
+    const { allowed: canEdit } = usePermission('edit_own_content');
     const providerConfig = getHeterogeneousAgentClientConfig(provider.type);
     const defaultCommand = providerConfig?.command || '';
     const resolvedCommand = provider.command?.trim() || defaultCommand;
@@ -250,7 +254,8 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
     }, [provider.type, resolvedCommand]);
 
     const detect = useCallback(async () => {
-      if (!isDesktop || !resolvedCommand) {
+      // Remote platform agents (openclaw, hermes, amp, opencode, …) have no local CLI to detect.
+      if (isRemoteHeterogeneousType(provider.type) || !isDesktop || !resolvedCommand) {
         setDetecting(false);
         return;
       }
@@ -300,11 +305,12 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
     }, [isEditingCommand]);
 
     const startEditingCommand = useCallback(() => {
+      if (!canEdit) return;
       if (savingCommand) return;
 
       setCommandInput(resolvedCommand);
       setIsEditingCommand(true);
-    }, [resolvedCommand, savingCommand]);
+    }, [canEdit, resolvedCommand, savingCommand]);
 
     const cancelEditingCommand = useCallback(() => {
       setCommandInput(resolvedCommand);
@@ -312,6 +318,8 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
     }, [resolvedCommand]);
 
     const commitCommand = useCallback(async () => {
+      if (!canEdit) return;
+
       const normalizedCommand = commandInput.trim() || defaultCommand;
       setCommandInput(normalizedCommand);
 
@@ -327,7 +335,7 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
       } finally {
         setSavingCommand(false);
       }
-    }, [commandInput, defaultCommand, onCommandChange, resolvedCommand, savingCommand]);
+    }, [canEdit, commandInput, defaultCommand, onCommandChange, resolvedCommand, savingCommand]);
 
     const renderStatusTag = () => {
       if (detecting) {
@@ -406,7 +414,7 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
               <div className={styles.commandInputWrap}>
                 <Input
                   className={styles.commandInput}
-                  disabled={savingCommand}
+                  disabled={!canEdit || savingCommand}
                   placeholder={t('heterogeneousStatus.command.placeholder')}
                   ref={commandInputRef as never}
                   value={commandInput}
@@ -442,6 +450,7 @@ const HeterogeneousAgentStatusCard = memo<HeterogeneousAgentStatusCardProps>(
                 <ActionIcon
                   aria-label={t('heterogeneousStatus.command.edit')}
                   className={`command-edit-button ${styles.commandEditButton}`}
+                  disabled={!canEdit}
                   icon={PencilLine}
                   size="small"
                   onClick={startEditingCommand}

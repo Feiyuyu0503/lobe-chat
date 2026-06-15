@@ -5,43 +5,45 @@ import { cx } from 'antd-style';
 import { Pin, PinOff } from 'lucide-react';
 import React, { memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 
+import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { useElectronStore } from '@/store/electron';
 
+import { type ResolvedTab } from '../TabBar/hooks/useResolvedTabs';
+import { normalizeTabUrl } from '../TabBar/url';
 import { useStyles } from './styles';
-import { type ResolvedPageData } from './types';
 
 interface PageItemProps {
   isPinned: boolean;
-  item: ResolvedPageData;
+  item: ResolvedTab;
   onClose: () => void;
 }
 
 const PageItem = memo<PageItemProps>(({ item, isPinned, onClose }) => {
   const { t } = useTranslation('electron');
-  const navigate = useNavigate();
+  const navigate = useWorkspaceAwareNavigate();
   const location = useLocation();
   const styles = useStyles;
 
   const pinPage = useElectronStore((s) => s.pinPage);
   const unpinPage = useElectronStore((s) => s.unpinPage);
 
-  // Check if this item matches the current route
-  const currentUrl = location.pathname + location.search;
-  const isActive = item.url === currentUrl || item.url === currentUrl.replace(/\/+$/, '');
+  const { meta, tab } = item;
+  const currentId = normalizeTabUrl(location.pathname + location.search);
+  const isActive = tab.id === currentId;
 
   const handleClick = () => {
-    navigate(item.url);
+    navigate(tab.url);
     onClose();
   };
 
   const handlePinToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isPinned) {
-      unpinPage(item.reference.id);
+      unpinPage(tab.id);
     } else {
-      pinPage(item.reference);
+      pinPage(tab);
     }
   };
 
@@ -53,8 +55,8 @@ const PageItem = memo<PageItemProps>(({ item, isPinned, onClose }) => {
       gap={8}
       onClick={handleClick}
     >
-      {item.icon && <Icon className={styles.icon} icon={item.icon} size="small" />}
-      <span className={styles.itemTitle}>{item.title}</span>
+      {meta.icon && <Icon className={styles.icon} icon={meta.icon} size="small" />}
+      <span className={styles.itemTitle}>{meta.title}</span>
       <ActionIcon
         className={cx('actionIcon', styles.actionIcon)}
         icon={isPinned ? PinOff : Pin}

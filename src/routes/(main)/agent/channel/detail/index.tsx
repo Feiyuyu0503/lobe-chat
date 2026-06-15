@@ -1,10 +1,12 @@
 'use client';
 
+import { confirmModal } from '@lobehub/ui/base-ui';
 import { App, Form } from 'antd';
 import { createStaticStyles } from 'antd-style';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { usePermission } from '@/hooks/usePermission';
 import type { SerializedPlatformDefinition } from '@/server/services/bot/platforms/types';
 import { agentBotProviderService } from '@/services/agentBotProvider';
 import { useAgentStore } from '@/store/agent';
@@ -18,6 +20,7 @@ import Body from './Body';
 import Footer from './Footer';
 import { getChannelFormValues, mergeSettingsWithDefaults } from './formState';
 import Header from './Header';
+import { type ChannelPostSave, ChannelPostSaveContext } from './postSaveContext';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
   main: css`
@@ -62,15 +65,18 @@ export interface TestResult {
 interface PlatformDetailProps {
   agentId: string;
   currentConfig?: CurrentConfig;
+  disabled?: boolean;
   platformDef: SerializedPlatformDefinition;
   runtimeStatus?: BotRuntimeStatus;
 }
 
 const PlatformDetail = memo<PlatformDetailProps>(
-  ({ platformDef, agentId, currentConfig, runtimeStatus }) => {
+  ({ platformDef, agentId, currentConfig, disabled, runtimeStatus }) => {
     const { t } = useTranslation('agent');
-    const { message: msg, modal } = App.useApp();
+    const { message: msg } = App.useApp();
     const [form] = Form.useForm<ChannelFormValues>();
+    const { allowed: canEdit } = usePermission('edit_own_content');
+    const readOnly = disabled || !canEdit;
 
     const [
       createBotProvider,
@@ -101,6 +107,19 @@ const PlatformDetail = memo<PlatformDetailProps>(
     );
     const [refreshingStatus, setRefreshingStatus] = useState(false);
     const connectPollingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Platform-specific extras (e.g. iMessage's BlueBubbles bridge) register a
+    // side-effect here so it runs as part of the single "Save Configuration"
+    // click instead of a separate button.
+    const postSaveRef = useRef<ChannelPostSave | null>(null);
+    const postSaveRegistry = useMemo(
+      () => ({
+        register: (fn: ChannelPostSave | null) => {
+          postSaveRef.current = fn;
+        },
+      }),
+      [],
+    );
 
     const stopConnectPolling = useCallback(() => {
       if (!connectPollingTimerRef.current) return;
@@ -197,6 +216,7 @@ const PlatformDetail = memo<PlatformDetailProps>(
     );
 
     const handleRefreshStatus = useCallback(async () => {
+      if (readOnly) return;
       if (!currentConfig?.enabled) return;
       setRefreshingStatus(true);
       try {
@@ -217,7 +237,7 @@ const PlatformDetail = memo<PlatformDetailProps>(
       } finally {
         setRefreshingStatus(false);
       }
-    }, [agentId, currentConfig, mapRuntimeStatusToResult, msg, refreshBotRuntimeStatus]);
+    }, [agentId, readOnly, currentConfig, mapRuntimeStatusToResult, msg, refreshBotRuntimeStatus]);
 
     // Reset form and status when switching platforms. Must NOT depend on
     // runtimeStatus — otherwise background status refreshes would wipe
@@ -277,6 +297,8 @@ const PlatformDetail = memo<PlatformDetailProps>(
     }, [currentConfig, stopConnectPolling, syncRuntimeStatus]);
 
     const handleSave = useCallback(async () => {
+      if (readOnly) return;
+
       try {
         await form.validateFields();
         const values = form.getFieldsValue(true) as ChannelFormValues;
@@ -324,6 +346,10 @@ const PlatformDetail = memo<PlatformDetailProps>(
           });
         }
 
+        // Run any platform-specific post-save side-effect (e.g. iMessage's
+        // local BlueBubbles bridge) as part of the same save.
+        await postSaveRef.current?.({ applicationId });
+
         setSaveResult({ type: 'success' });
         setTimeout(() => setSaveResult(undefined), 3000);
         setSaving(false);
@@ -344,10 +370,13 @@ const PlatformDetail = memo<PlatformDetailProps>(
       createBotProvider,
       updateBotProvider,
       connectCurrentBot,
+      readOnly,
     ]);
 
     const handleExternalAuth = useCallback(
       async (params: { applicationId: string; credentials: Record<string, string> }) => {
+        if (readOnly) return;
+
         setSaving(true);
         setSaveResult(undefined);
         setConnectResult(undefined);
@@ -394,15 +423,17 @@ const PlatformDetail = memo<PlatformDetailProps>(
         createBotProvider,
         updateBotProvider,
         connectCurrentBot,
+        readOnly,
         msg,
         t,
       ],
     );
 
     const handleDelete = useCallback(async () => {
+      if (readOnly) return;
       if (!currentConfig) return;
 
-      modal.confirm({
+      confirmModal({
         content: t('channel.deleteConfirmDesc'),
         okButtonProps: { danger: true },
         onOk: async () => {
@@ -416,10 +447,11 @@ const PlatformDetail = memo<PlatformDetailProps>(
         },
         title: t('channel.deleteConfirm'),
       });
-    }, [currentConfig, agentId, deleteBotProvider, msg, t, modal, form]);
+    }, [readOnly, currentConfig, agentId, deleteBotProvider, msg, t, form]);
 
     const handleToggleEnable = useCallback(
       async (enabled: boolean) => {
+        if (readOnly) return;
         if (!currentConfig) return;
         try {
           setPendingEnabled(enabled);
@@ -435,10 +467,11 @@ const PlatformDetail = memo<PlatformDetailProps>(
           msg.error(t('channel.updateFailed'));
         }
       },
-      [currentConfig, agentId, updateBotProvider, connectCurrentBot, msg, t],
+      [readOnly, currentConfig, agentId, updateBotProvider, connectCurrentBot, msg, t],
     );
 
     const handleTestConnection = useCallback(async () => {
+      if (readOnly) return;
       if (!currentConfig) {
         msg.warning(t('channel.saveFirstWarning'));
         return;
@@ -460,44 +493,49 @@ const PlatformDetail = memo<PlatformDetailProps>(
       } finally {
         setTesting(false);
       }
-    }, [currentConfig, platformDef.id, testConnection, msg, t]);
+    }, [readOnly, currentConfig, platformDef.id, testConnection, msg, t]);
 
     return (
-      <main className={styles.main}>
-        <Header
-          currentConfig={currentConfig}
-          enabledValue={pendingEnabled}
-          platformDef={platformDef}
-          refreshingStatus={refreshingStatus}
-          runtimeStatus={observedStatus}
-          toggleLoading={toggleLoading}
-          onRefreshStatus={handleRefreshStatus}
-          onToggleEnable={handleToggleEnable}
-        />
-        <Body
-          currentConfig={currentConfig}
-          form={form}
-          hasConfig={!!currentConfig}
-          platformDef={platformDef}
-          onAuthenticated={handleExternalAuth}
-        />
-        <Footer
-          connectResult={connectResult}
-          connecting={connecting}
-          currentConfig={currentConfig}
-          form={form}
-          hasConfig={!!currentConfig}
-          platformDef={platformDef}
-          saveResult={saveResult}
-          saving={saving}
-          testResult={testResult}
-          testing={testing}
-          onCopied={() => msg.success(t('channel.copied'))}
-          onDelete={handleDelete}
-          onSave={handleSave}
-          onTestConnection={handleTestConnection}
-        />
-      </main>
+      <ChannelPostSaveContext value={postSaveRegistry}>
+        <main className={styles.main}>
+          <Header
+            currentConfig={currentConfig}
+            disabled={readOnly}
+            enabledValue={pendingEnabled}
+            platformDef={platformDef}
+            refreshingStatus={refreshingStatus}
+            runtimeStatus={observedStatus}
+            toggleLoading={toggleLoading}
+            onRefreshStatus={handleRefreshStatus}
+            onToggleEnable={handleToggleEnable}
+          />
+          <Body
+            currentConfig={currentConfig}
+            disabled={readOnly}
+            form={form}
+            hasConfig={!!currentConfig}
+            platformDef={platformDef}
+            onAuthenticated={handleExternalAuth}
+          />
+          <Footer
+            connectResult={connectResult}
+            connecting={connecting}
+            currentConfig={currentConfig}
+            disabled={readOnly}
+            form={form}
+            hasConfig={!!currentConfig}
+            platformDef={platformDef}
+            saveResult={saveResult}
+            saving={saving}
+            testResult={testResult}
+            testing={testing}
+            onCopied={() => msg.success(t('channel.copied'))}
+            onDelete={handleDelete}
+            onSave={handleSave}
+            onTestConnection={handleTestConnection}
+          />
+        </main>
+      </ChannelPostSaveContext>
     );
   },
 );

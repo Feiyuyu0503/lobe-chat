@@ -17,6 +17,7 @@ const prefixes = {
   documents: 'docs',
   evalBenchmarks: 'evb',
   evalDatasets: 'ds',
+  evalExperiments: 'exp',
   evalRuns: 'run',
   evalTestCases: 'case',
   files: 'file',
@@ -33,6 +34,9 @@ const prefixes = {
   threads: 'thd',
   topics: 'tpc',
   user: 'user',
+  workspaceAuditLogs: 'wal',
+  workspaceInvitations: 'wsi',
+  workspaces: 'ws',
 } as const;
 
 export const idGenerator = (namespace: keyof typeof prefixes, size = 12) => {

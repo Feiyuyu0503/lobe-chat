@@ -99,6 +99,34 @@ describe('agentSelectors', () => {
     });
   });
 
+  describe('currentAgentMode', () => {
+    it('should return auto by default', () => {
+      const state = createState({
+        activeAgentId: 'agent-1',
+        agentMap: { 'agent-1': { chatConfig: {} } },
+      });
+
+      expect(agentSelectors.currentAgentMode(state)).toBe('auto');
+      expect(agentSelectors.isAgentModeEnabled(state)).toBe(true);
+    });
+
+    it('should keep fable in agent mode when agent mode is enabled', () => {
+      const state = createState({
+        activeAgentId: 'agent-1',
+        agentMap: {
+          'agent-1': {
+            chatConfig: { enableAgentMode: true },
+            model: 'claude-fable-5',
+            provider: 'lobehub',
+          },
+        },
+      });
+
+      expect(agentSelectors.currentAgentMode(state)).toBe('auto');
+      expect(agentSelectors.isAgentModeEnabled(state)).toBe(true);
+    });
+  });
+
   describe('currentAgentMeta', () => {
     it('should return complete meta data', () => {
       const state = createState({
@@ -357,6 +385,50 @@ describe('agentSelectors', () => {
       });
 
       expect(agentSelectors.isAgentConfigLoading(state)).toBe(false);
+    });
+  });
+
+  describe('canCurrentAgentPublishToCommunity', () => {
+    it('should allow publishing normal agents', () => {
+      const state = createState({
+        activeAgentId: 'agent-1',
+        agentMap: { 'agent-1': { id: 'agent-1' } },
+      });
+
+      expect(agentSelectors.canCurrentAgentPublishToCommunity(state)).toBe(true);
+    });
+
+    it('should prevent publishing local heterogeneous agents', () => {
+      const state = createState({
+        activeAgentId: 'agent-1',
+        agentMap: {
+          'agent-1': {
+            agencyConfig: {
+              heterogeneousProvider: { command: 'codex', type: 'codex' },
+            },
+            id: 'agent-1',
+          },
+        },
+      });
+
+      expect(agentSelectors.canCurrentAgentPublishToCommunity(state)).toBe(false);
+    });
+
+    it('should prevent publishing platform agents', () => {
+      const state = createState({
+        activeAgentId: 'agent-1',
+        agentMap: {
+          'agent-1': {
+            agencyConfig: {
+              boundDeviceId: 'device-1',
+              heterogeneousProvider: { type: 'openclaw' },
+            },
+            id: 'agent-1',
+          },
+        },
+      });
+
+      expect(agentSelectors.canCurrentAgentPublishToCommunity(state)).toBe(false);
     });
   });
 

@@ -20,8 +20,8 @@
     "mime": "^4.1.0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^24.13.2",
     "tsup": "^8.3.5",
-    "typescript": "^5.7.2"
+    "typescript": "^6.0.3"
   }
 }

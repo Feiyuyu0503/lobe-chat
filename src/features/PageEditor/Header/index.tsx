@@ -5,6 +5,7 @@ import { ArrowLeftIcon, MoreHorizontal } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import ShareButton from '@/business/client/features/PageShare/ShareButton';
 import { DESKTOP_HEADER_ICON_SMALL_SIZE } from '@/const/layoutTokens';
 import { AutoSaveHint } from '@/features/EditorCanvas';
 import NavHeader from '@/features/NavHeader';
@@ -12,6 +13,7 @@ import ToggleRightPanelButton from '@/features/RightPanel/ToggleRightPanelButton
 
 import { usePageAgentPanelControl } from '../RightPanel/OverrideContext';
 import { usePageEditorStore } from '../store';
+import { usePageEditable } from '../usePageEditable';
 import Breadcrumb from './Breadcrumb';
 import { useMenu } from './useMenu';
 
@@ -26,6 +28,8 @@ const Header = memo(() => {
   ]);
   const { expand: showPageAgentPanel, toggle: togglePageAgentPanel } = usePageAgentPanelControl();
   const { menuItems } = useMenu();
+  // Page Agent edits the page — only offer it in edit mode.
+  const editable = usePageEditable();
 
   return (
     <NavHeader
@@ -50,6 +54,7 @@ const Header = memo(() => {
       }
       right={
         <>
+          {documentId && <ShareButton documentId={documentId} />}
           {/* Three-dot menu */}
           <DropdownMenu
             iconSpaceMode="group"
@@ -63,12 +68,14 @@ const Header = memo(() => {
           >
             <ActionIcon icon={MoreHorizontal} size={DESKTOP_HEADER_ICON_SMALL_SIZE} />
           </DropdownMenu>
-          <ToggleRightPanelButton
-            hideWhenExpanded
-            expand={showPageAgentPanel}
-            showActive={false}
-            onToggle={() => togglePageAgentPanel()}
-          />
+          {editable && (
+            <ToggleRightPanelButton
+              hideWhenExpanded
+              expand={showPageAgentPanel}
+              showActive={false}
+              onToggle={() => togglePageAgentPanel()}
+            />
+          )}
         </>
       }
     />

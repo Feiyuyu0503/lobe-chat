@@ -14,32 +14,26 @@ vi.mock('zustand/traditional');
 
 // Mock agentService
 vi.mock('@/services/agent', () => ({
+  AVAILABLE_AGENTS_CONTEXT_QUERY_LIMIT: 12,
   agentService: {
+    createAgent: vi.fn(),
     getAgentConfigById: vi.fn(),
     getSessionConfig: vi.fn(),
+    queryAgents: vi.fn(),
     updateAgentConfig: vi.fn(),
     updateAgentMeta: vi.fn(),
   },
 }));
 
 vi.mock('@/services/agentDocument', () => ({
+  agentDocumentService: {
+    listDocuments: vi.fn(),
+  },
   agentDocumentSWRKeys: {
     documents: (agentId: string) => ['agent-documents', agentId] as const,
+    documentsList: (agentId: string) => ['agent-documents-list', agentId] as const,
   },
-  agentDocumentService: {
-    getDocuments: vi.fn(),
-  },
-  mapAgentDocumentsToContext: (documents: any[]) =>
-    documents.map((doc) => ({
-      content: doc.content,
-      filename: doc.filename,
-      id: doc.id,
-      loadPosition: undefined,
-      loadRules: doc.loadRules,
-      policyId: doc.templateId,
-      policyLoadFormat: undefined,
-      title: doc.title,
-    })),
+  resolveAgentDocumentsContext: vi.fn(),
 }));
 
 // Mock sessionStore
@@ -66,6 +60,7 @@ beforeEach(() => {
     activeAgentId: undefined,
     agentMap: {},
     builtinAgentIdMap: {},
+    availableAgents: undefined,
     updateAgentConfigSignal: undefined,
     agentDocumentsMap: {},
     updateAgentMetaSignal: undefined,
@@ -77,40 +72,112 @@ afterEach(() => {
 });
 
 describe('AgentSlice Actions', () => {
+  describe('createAgent', () => {
+    it('should invalidate cached available agents after creating an agent', async () => {
+      vi.mocked(agentService.createAgent).mockResolvedValue({ agentId: 'agent-2' });
+      const { result } = renderHook(() => useAgentStore());
+
+      act(() => {
+        useAgentStore.setState({
+          availableAgents: [
+            {
+              avatar: null,
+              backgroundColor: null,
+              description: 'stale',
+              id: 'agent-1',
+              title: 'Stale Agent',
+            },
+          ],
+        });
+      });
+
+      await act(async () => {
+        await result.current.createAgent({ config: { title: 'New Agent' } });
+      });
+
+      expect(result.current.availableAgents).toBeUndefined();
+    });
+  });
+
   describe('useFetchAgentDocuments', () => {
-    it('should sync fetched agent documents into store cache', async () => {
-      vi.mocked(agentDocumentService.getDocuments).mockResolvedValue([
+    it('should fetch agent documents via listDocuments', async () => {
+      const docs = [
         {
-          content: 'setup steps',
+          documentId: 'doc-1',
           filename: 'setup.md',
           id: 'doc-1',
-          loadRules: [],
-          policy: null,
-          policyLoadFormat: null,
-          policyLoadPosition: null,
-          templateId: null,
           title: 'Setup',
         },
-      ] as any);
+      ];
+      vi.mocked(agentDocumentService.listDocuments).mockResolvedValue(docs as any);
+
+      const store = renderHook(() => useAgentStore(), { wrapper: withSWR });
+
+      const { result } = renderHook(() => store.result.current.useFetchAgentDocuments('agent-1'), {
+        wrapper: withSWR,
+      });
+
+      await waitFor(() => {
+        expect(result.current.data).toEqual(docs);
+      });
+      expect(agentDocumentService.listDocuments).toHaveBeenCalledWith({ agentId: 'agent-1' });
+    });
+  });
+
+  describe('useFetchAvailableAgents', () => {
+    it('should sync fetched available agents into store cache', async () => {
+      vi.mocked(agentService.queryAgents).mockResolvedValue([
+        {
+          avatar: null,
+          backgroundColor: null,
+          description: 'Helps with setup',
+          id: 'agent-1',
+          title: 'Setup',
+        },
+      ]);
 
       const { result } = renderHook(() => useAgentStore(), { wrapper: withSWR });
 
-      renderHook(() => result.current.useFetchAgentDocuments('agent-1'), { wrapper: withSWR });
+      renderHook(() => result.current.useFetchAvailableAgents(true), { wrapper: withSWR });
 
       await waitFor(() => {
-        expect(result.current.agentDocumentsMap['agent-1']).toEqual([
+        expect(result.current.availableAgents).toEqual([
           {
-            content: 'setup steps',
-            filename: 'setup.md',
-            id: 'doc-1',
-            loadPosition: undefined,
-            loadRules: [],
-            policyId: null,
-            policyLoadFormat: undefined,
+            avatar: null,
+            backgroundColor: null,
+            description: 'Helps with setup',
+            id: 'agent-1',
             title: 'Setup',
           },
         ]);
       });
+      expect(agentService.queryAgents).toHaveBeenCalledWith({ limit: 12 });
+    });
+  });
+
+  describe('invalidateAvailableAgents', () => {
+    it('should clear cached available agents', () => {
+      const { result } = renderHook(() => useAgentStore());
+
+      act(() => {
+        useAgentStore.setState({
+          availableAgents: [
+            {
+              avatar: null,
+              backgroundColor: null,
+              description: 'stale',
+              id: 'agent-1',
+              title: 'Stale Agent',
+            },
+          ],
+        });
+      });
+
+      act(() => {
+        result.current.invalidateAvailableAgents();
+      });
+
+      expect(result.current.availableAgents).toBeUndefined();
     });
   });
 
@@ -396,6 +463,15 @@ describe('AgentSlice Actions', () => {
         useAgentStore.setState({
           activeAgentId: 'agent-1',
           agentMap: { 'agent-1': { title: 'Old Title' } as any },
+          availableAgents: [
+            {
+              avatar: null,
+              backgroundColor: null,
+              description: 'Old Desc',
+              id: 'agent-1',
+              title: 'Old Title',
+            },
+          ],
         });
       });
 
@@ -407,6 +483,7 @@ describe('AgentSlice Actions', () => {
         description: 'New Desc',
         title: 'New Title',
       });
+      expect(result.current.availableAgents).toBeUndefined();
     });
 
     // Note: refreshSessions is no longer called after optimistic update
@@ -462,6 +539,40 @@ describe('AgentSlice Actions', () => {
       expect(agentService.getAgentConfigById).toHaveBeenCalledWith('agent-1');
       expect(useAgentStore.getState().activeAgentId).toBe('agent-1');
       expect(useAgentStore.getState().agentMap['agent-1']).toBeDefined();
+    });
+
+    it('should record fetch error in agentConfigErrorMap and clear it on retry', async () => {
+      const error = Object.assign(new Error('boom'), { meta: { shouldRetry: false } });
+      vi.mocked(agentService.getAgentConfigById).mockRejectedValueOnce(error);
+
+      renderHook(() => useAgentStore().useFetchAgentConfig(true, 'agent-err'), {
+        wrapper: withSWR,
+      });
+
+      await waitFor(() =>
+        expect(useAgentStore.getState().agentConfigErrorMap['agent-err']).toBe('boom'),
+      );
+
+      await act(async () => {
+        await useAgentStore.getState().retryAgentConfigFetch('agent-err');
+      });
+
+      expect(useAgentStore.getState().agentConfigErrorMap['agent-err']).toBeUndefined();
+    });
+
+    it('should clear a stale fetch error once data arrives', async () => {
+      useAgentStore.setState({ agentConfigErrorMap: { 'agent-1': 'boom' } });
+
+      const mockAgentConfig = { id: 'agent-1', model: 'gpt-4' } as LobeAgentConfig;
+      vi.mocked(agentService.getAgentConfigById).mockResolvedValueOnce(mockAgentConfig as any);
+
+      const { result } = renderHook(() => useAgentStore().useFetchAgentConfig(true, 'agent-1'), {
+        wrapper: withSWR,
+      });
+
+      await waitFor(() => expect(result.current.data).toEqual(mockAgentConfig));
+
+      expect(useAgentStore.getState().agentConfigErrorMap['agent-1']).toBeUndefined();
     });
   });
 

@@ -1,6 +1,6 @@
 ---
 name: testing
-description: Testing guide using Vitest. Use when writing tests (.test.ts, .test.tsx), fixing failing tests, improving test coverage, or debugging test issues. Triggers on test creation, test debugging, mock setup, or test-related questions.
+description: 'Vitest testing guide. Use when writing or updating tests, fixing failing tests, improving coverage, debugging test issues, or setting up mocks.'
 user-invocable: false
 ---
 
@@ -14,14 +14,20 @@ user-invocable: false
 # Run specific test file
 bunx vitest run --silent='passed-only' '[file-path]'
 
-# Database package (client)
+# Database package (client-db, PGlite — default, skips BM25/pg_search)
 cd packages/database && bunx vitest run --silent='passed-only' '[file]'
 
-# Database package (server)
+# Database package (server-db, Postgres — BM25/pgvector parity, what CI measures coverage in)
 cd packages/database && TEST_SERVER_DB=1 bunx vitest run --silent='passed-only' '[file]'
 ```
 
 **Never run** `bun run test` - it runs all 3000+ tests (\~10 minutes).
+
+> **Database models/repositories:** every new file under `packages/database/src/models/**`
+> or `src/repositories/**` ships with a sibling `__tests__/<name>.test.ts` in the same PR.
+> Use the real DB via `getTestDB()` (integration style), guard BM25/full-text-search blocks
+> with `describe.skipIf(!isServerDB)`, and always test user-isolation. See
+> `references/db-model-test.md` for setup, schema gotchas, and the client-vs-server-db split.
 
 ## Test Categories
 

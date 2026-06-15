@@ -7,7 +7,7 @@ import { app, protocol } from 'electron';
 import { LOCAL_FILE_PROTOCOL_HOST, LOCAL_FILE_PROTOCOL_SCHEME } from '@/const/protocol';
 import { createLogger } from '@/utils/logger';
 
-import { getExportMimeType } from '../../utils/mime';
+import { resolveLocalFileMimeType } from '../../utils/mime';
 
 const LOCAL_FILE_PROTOCOL_PRIVILEGES = {
   allowServiceWorkers: false,
@@ -21,20 +21,6 @@ const LOCAL_FILE_PROTOCOL_PRIVILEGES = {
 
 const logger = createLogger('core:LocalFileProtocolManager');
 const PREVIEW_TOKEN_TTL_MS = 5 * 60 * 1000;
-
-const EXTRA_MIME_TYPES: Record<string, string> = {
-  '.avif': 'image/avif',
-  '.bmp': 'image/bmp',
-  '.heic': 'image/heic',
-  '.heif': 'image/heif',
-  '.tif': 'image/tiff',
-  '.tiff': 'image/tiff',
-};
-
-const getMimeType = (filePath: string): string => {
-  const ext = path.extname(filePath).toLowerCase();
-  return getExportMimeType(filePath) ?? EXTRA_MIME_TYPES[ext] ?? 'application/octet-stream';
-};
 
 const normalizeAbsolutePath = (filePath: string): string | null => {
   const normalized = path.normalize(filePath);
@@ -61,6 +47,27 @@ interface PreviewTokenRecord {
   expiresAt: number;
   realPath: string;
 }
+
+export interface PreviewFileReadResult {
+  buffer: Buffer;
+  contentType: string;
+  realPath: string;
+}
+
+type PreviewFileAccept = 'image';
+
+const normalizeContentType = (contentType: string): string =>
+  contentType.split(';')[0].trim().toLowerCase();
+
+const isAcceptedPreviewContentType = (
+  contentType: string,
+  accept?: PreviewFileAccept,
+): boolean => {
+  if (!accept) return true;
+
+  const normalizedContentType = normalizeContentType(contentType);
+  return accept === 'image' && normalizedContentType.startsWith('image/');
+};
 
 /**
  * Custom `localfile://` protocol for project file previews.
@@ -130,7 +137,7 @@ export class LocalFileProtocolManager {
 
           const buffer = await readFile(realResolvedPath);
           const headers = new Headers();
-          headers.set('Content-Type', getMimeType(realResolvedPath));
+          headers.set('Content-Type', resolveLocalFileMimeType(realResolvedPath, buffer));
           headers.set('Content-Length', String(buffer.byteLength));
           // Local files are immutable from the renderer's perspective for a
           // single preview session; allow short-lived caching to avoid
@@ -221,41 +228,63 @@ export class LocalFileProtocolManager {
   }
 
   async createPreviewUrl({
+    accept,
     filePath,
     workspaceRoot,
   }: {
+    accept?: PreviewFileAccept;
     filePath: string;
     workspaceRoot: string;
   }): Promise<string | null> {
     const normalizedFilePath = normalizeAbsolutePath(filePath);
-    const normalizedWorkspaceRoot = normalizeAbsolutePath(workspaceRoot);
-    if (!normalizedFilePath || !normalizedWorkspaceRoot) return null;
+    if (!normalizedFilePath) return null;
 
-    const [realFilePath, realWorkspaceRoot] = await Promise.all([
-      realpath(normalizedFilePath),
-      realpath(normalizedWorkspaceRoot),
-    ]);
-    const normalizedRealFilePath = normalizeAbsolutePath(realFilePath);
-    const normalizedRealWorkspaceRoot = normalizeAbsolutePath(realWorkspaceRoot);
-
-    if (!normalizedRealFilePath || !normalizedRealWorkspaceRoot) return null;
-    if (
-      !this.approvedWorkspaceRoots.has(normalizedRealWorkspaceRoot) &&
-      !this.indexedProjectRoots.has(normalizedRealWorkspaceRoot)
-    ) {
-      return null;
-    }
-    if (!isPathWithinRoot(normalizedRealFilePath, normalizedRealWorkspaceRoot)) return null;
+    const realFilePath = accept
+      ? (
+          await this.readPreviewFile({
+            accept,
+            filePath,
+            workspaceRoot,
+          })
+        )?.realPath
+      : await this.resolveApprovedPreviewPath({ filePath, workspaceRoot });
+    if (!realFilePath) return null;
 
     this.cleanupExpiredTokens();
 
     const token = randomUUID();
     this.previewTokens.set(token, {
       expiresAt: Date.now() + PREVIEW_TOKEN_TTL_MS,
-      realPath: normalizedRealFilePath,
+      realPath: realFilePath,
     });
 
     return buildLocalFileUrl(normalizedFilePath, token);
+  }
+
+  async readPreviewFile({
+    accept,
+    filePath,
+    workspaceRoot,
+  }: {
+    accept?: PreviewFileAccept;
+    filePath: string;
+    workspaceRoot: string;
+  }): Promise<PreviewFileReadResult | null> {
+    const realFilePath = await this.resolveApprovedPreviewPath({ filePath, workspaceRoot });
+    if (!realFilePath) return null;
+
+    const fileStat = await stat(realFilePath);
+    if (!fileStat.isFile()) return null;
+
+    const buffer = await readFile(realFilePath);
+    const contentType = resolveLocalFileMimeType(realFilePath, buffer);
+    if (!isAcceptedPreviewContentType(contentType, accept)) return null;
+
+    return {
+      buffer,
+      contentType,
+      realPath: realFilePath,
+    };
   }
 
   /**
@@ -295,6 +324,36 @@ export class LocalFileProtocolManager {
     if (!path.isAbsolute(normalized)) return null;
 
     return normalized;
+  }
+
+  private async resolveApprovedPreviewPath({
+    filePath,
+    workspaceRoot,
+  }: {
+    filePath: string;
+    workspaceRoot: string;
+  }): Promise<string | null> {
+    const normalizedFilePath = normalizeAbsolutePath(filePath);
+    const normalizedWorkspaceRoot = normalizeAbsolutePath(workspaceRoot);
+    if (!normalizedFilePath || !normalizedWorkspaceRoot) return null;
+
+    const [realFilePath, realWorkspaceRoot] = await Promise.all([
+      realpath(normalizedFilePath),
+      realpath(normalizedWorkspaceRoot),
+    ]);
+    const normalizedRealFilePath = normalizeAbsolutePath(realFilePath);
+    const normalizedRealWorkspaceRoot = normalizeAbsolutePath(realWorkspaceRoot);
+
+    if (!normalizedRealFilePath || !normalizedRealWorkspaceRoot) return null;
+    if (
+      !this.approvedWorkspaceRoots.has(normalizedRealWorkspaceRoot) &&
+      !this.indexedProjectRoots.has(normalizedRealWorkspaceRoot)
+    ) {
+      return null;
+    }
+    if (!isPathWithinRoot(normalizedRealFilePath, normalizedRealWorkspaceRoot)) return null;
+
+    return normalizedRealFilePath;
   }
 
   private cleanupExpiredTokens() {

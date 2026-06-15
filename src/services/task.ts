@@ -52,6 +52,7 @@ class TaskService {
     automationMode?: TaskAutomationMode;
     createdByAgentId?: string;
     description?: string;
+    editorData?: unknown;
     identifierPrefix?: string;
     instruction: string;
     name?: string;
@@ -71,6 +72,7 @@ class TaskService {
       config?: Record<string, unknown>;
       context?: Record<string, unknown>;
       description?: string;
+      editorData?: unknown;
       // heartbeatInterval: periodic execution interval (seconds), controls how often the task auto-executes
       heartbeatInterval?: number;
       // heartbeatTimeout: watchdog timeout threshold (seconds), used to detect if a running task is stuck
@@ -103,14 +105,19 @@ class TaskService {
   addComment = async (
     id: string,
     content: string,
-    opts?: { authorAgentId?: string; briefId?: string; topicId?: string },
+    opts?: {
+      authorAgentId?: string;
+      briefId?: string;
+      editorData?: unknown;
+      topicId?: string;
+    },
   ) => lambdaClient.task.addComment.mutate({ content, id, ...opts });
 
   deleteComment = async (commentId: string) =>
     lambdaClient.task.deleteComment.mutate({ commentId });
 
-  updateComment = async (commentId: string, content: string) =>
-    lambdaClient.task.updateComment.mutate({ commentId, content });
+  updateComment = async (commentId: string, content: string, opts?: { editorData?: unknown }) =>
+    lambdaClient.task.updateComment.mutate({ commentId, content, ...opts });
 
   addDependency = async (
     taskId: string,
@@ -153,6 +160,14 @@ class TaskService {
     lambdaClient.brief.resolve.mutate({ id, ...opts });
 
   markBriefRead = async (id: string) => lambdaClient.brief.markRead.mutate({ id });
+
+  // ── Transfer / Copy ──
+
+  transferTask = async (taskId: string, targetWorkspaceId: string | null) =>
+    lambdaClient.task.transferTask.mutate({ targetWorkspaceId, taskId });
+
+  copyTaskToWorkspace = async (taskId: string, targetWorkspaceId: string | null) =>
+    lambdaClient.task.copyTaskToWorkspace.mutate({ targetWorkspaceId, taskId });
 }
 
 export const taskService = new TaskService();

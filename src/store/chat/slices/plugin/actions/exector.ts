@@ -1,5 +1,4 @@
 import { type MCPToolCallResult } from '@/libs/mcp';
-import { truncateToolResult } from '@/server/utils/truncateToolResult';
 import { useToolStore } from '@/store/tool';
 import { type ChatToolPayload } from '@/types/message';
 import { safeParseJSON } from '@/utils/safeParseJSON';
@@ -48,8 +47,9 @@ export const klavisExecutor: RemoteToolExecutor = async (p, _context) => {
   // Parse arguments
   const args = safeParseJSON(p.arguments) || {};
 
-  // Call Klavis tool via store action
+  // Call Klavis tool via store action — pass identifier for precise permission gate lookup
   const result = await useToolStore.getState().callKlavisTool({
+    identifier,
     serverUrl: server.serverUrl,
     toolArgs: args,
     toolName: p.apiName,
@@ -64,7 +64,7 @@ export const klavisExecutor: RemoteToolExecutor = async (p, _context) => {
   const toolResult = result.data;
   if (toolResult) {
     return {
-      content: truncateToolResult(toolResult.content),
+      content: toolResult.content,
       error: toolResult.state?.isError ? toolResult.state : undefined,
       state: toolResult.state,
       success: toolResult.success,
@@ -97,8 +97,7 @@ export const lobehubSkillExecutor: RemoteToolExecutor = async (p, context) => {
   }
 
   // Convert to MCPToolCallResult format
-  const rawContent = typeof result.data === 'string' ? result.data : JSON.stringify(result.data);
-  const content = truncateToolResult(rawContent);
+  const content = typeof result.data === 'string' ? result.data : JSON.stringify(result.data);
 
   return {
     content,

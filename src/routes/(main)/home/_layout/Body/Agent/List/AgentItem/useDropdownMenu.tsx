@@ -1,6 +1,7 @@
 import { SessionDefaultGroup } from '@lobechat/types';
 import { type MenuProps } from '@lobehub/ui';
 import { Icon } from '@lobehub/ui';
+import { confirmModal } from '@lobehub/ui/base-ui';
 import { App } from 'antd';
 import isEqual from 'fast-deep-equal';
 import {
@@ -17,7 +18,9 @@ import {
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useAgentTransferMenuItem } from '@/business/client/hooks/useAgentTransferMenuItem';
 import { openEditingPopover } from '@/features/EditingPopover/store';
+import { usePermission } from '@/hooks/usePermission';
 import { useGlobalStore } from '@/store/global';
 import { useHomeStore } from '@/store/home';
 import { homeAgentListSelectors } from '@/store/home/selectors';
@@ -41,8 +44,8 @@ export const useAgentDropdownMenu = ({
   pinned,
   title,
 }: UseAgentDropdownMenuParams): (() => MenuProps['items']) => {
-  const { t } = useTranslation('chat');
-  const { modal, message } = App.useApp();
+  const { t } = useTranslation(['chat', 'common']);
+  const { message } = App.useApp();
 
   const openAgentInNewWindow = useGlobalStore((s) => s.openAgentInNewWindow);
   const sessionCustomGroups = useHomeStore(homeAgentListSelectors.agentGroups, isEqual);
@@ -53,18 +56,30 @@ export const useAgentDropdownMenu = ({
     s.removeAgent,
   ]);
 
+  // Viewer has no write permissions on agents — disable every mutating menu
+  // item (pin/rename/duplicate/move/delete) while keeping the menu visible
+  // so they can still inspect what actions exist. `openInNewWindow` is a
+  // pure read so it stays enabled.
+  const { allowed: canEdit } = usePermission('edit_own_content');
+  const { allowed: canCreate } = usePermission('create_content');
+
+  // Cross-workspace Transfer to… / Copy to… items (null when workspace feature is off)
+  const transferMenuItems = useAgentTransferMenuItem(id);
+
   const isDefault = group === SessionDefaultGroup.Default;
 
   return useMemo(
     () => () =>
       [
         {
+          disabled: !canEdit,
           icon: <Icon icon={pinned ? PinOff : Pin} />,
           key: 'pin',
           label: t(pinned ? 'pinOff' : 'pin'),
           onClick: () => pinAgent(id, !pinned),
         },
         {
+          disabled: !canEdit,
           icon: <Icon icon={Pen} />,
           key: 'rename',
           label: t('rename', { ns: 'common' }),
@@ -76,6 +91,7 @@ export const useAgentDropdownMenu = ({
           },
         },
         {
+          disabled: !canCreate,
           icon: <Icon icon={LucideCopy} />,
           key: 'duplicate',
           label: t('duplicate', { ns: 'common' }),
@@ -95,6 +111,7 @@ export const useAgentDropdownMenu = ({
         },
         { type: 'divider' },
         {
+          disabled: !canEdit,
           children: [
             ...sessionCustomGroups.map(({ id: groupId, name }) => ({
               icon: group === groupId ? <Icon icon={Check} /> : <div />,
@@ -124,27 +141,34 @@ export const useAgentDropdownMenu = ({
           label: t('sessionGroup.moveGroup'),
         },
         { type: 'divider' },
+        ...(transferMenuItems ?? []),
+        ...(transferMenuItems?.length ? [{ type: 'divider' as const }] : []),
         {
           danger: true,
+          disabled: !canEdit,
           icon: <Icon icon={Trash} />,
           key: 'delete',
           label: t('delete', { ns: 'common' }),
           onClick: ({ domEvent }: any) => {
             domEvent.stopPropagation();
-            modal.confirm({
-              centered: true,
+            confirmModal({
+              cancelText: t('cancel', { ns: 'common' }),
+              content: t('confirmRemoveSessionItemAlert'),
               okButtonProps: { danger: true },
+              okText: t('delete', { ns: 'common' }),
               onOk: async () => {
                 await removeAgent(id);
                 message.success(t('confirmRemoveSessionSuccess'));
               },
-              title: t('confirmRemoveSessionItemAlert'),
+              title: t('delete', { ns: 'common' }),
             });
           },
         },
       ] as MenuProps['items'],
     [
       anchor,
+      canCreate,
+      canEdit,
       pinned,
       id,
       avatar,
@@ -154,6 +178,7 @@ export const useAgentDropdownMenu = ({
       isDefault,
       openCreateGroupModal,
       message,
+      transferMenuItems,
     ],
   );
 };

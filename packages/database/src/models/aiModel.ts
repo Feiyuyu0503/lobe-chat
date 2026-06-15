@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import type {
   AiModelSortMap,
   AiProviderModelListItem,
@@ -131,6 +131,7 @@ export class AiModelModel {
       .onConflictDoUpdate({
         set: value,
         target: [aiModels.id, aiModels.providerId, aiModels.userId],
+        targetWhere: isNull(aiModels.workspaceId),
       });
   };
 
@@ -157,6 +158,7 @@ export class AiModelModel {
       .onConflictDoUpdate({
         set: updateValues,
         target: [aiModels.id, aiModels.providerId, aiModels.userId],
+        targetWhere: isNull(aiModels.workspaceId),
       });
   };
 
@@ -179,6 +181,7 @@ export class AiModelModel {
       .values(records)
       .onConflictDoNothing({
         target: [aiModels.id, aiModels.userId, aiModels.providerId],
+        where: isNull(aiModels.workspaceId),
       })
       .returning();
   };
@@ -190,12 +193,15 @@ export class AiModelModel {
     }
 
     // Get default model list to preserve type information
-    const { LOBE_DEFAULT_MODEL_LIST } = await import('model-bank');
-    const defaultModelMap = new Map(LOBE_DEFAULT_MODEL_LIST.map((m) => [m.id, m]));
+    const { loadModels } = await import('@lobechat/business-model-bank/model-config');
+    const defaultModels = await loadModels();
+    const defaultModelMap = new Map(defaultModels.map((m) => [`${m.providerId}:${m.id}`, m]));
 
     // Prepare all records for batch upsert
     const allRecords = models.map((modelId) => {
-      const defaultModel = defaultModelMap.get(modelId);
+      const defaultModel =
+        defaultModelMap.get(`${providerId}:${modelId}`) ??
+        defaultModels.find((model) => model.id === modelId);
       const record: typeof aiModels.$inferInsert = {
         enabled,
         id: modelId,
@@ -224,6 +230,7 @@ export class AiModelModel {
           updatedAt: sql`excluded.updated_at`,
         },
         target: [aiModels.id, aiModels.userId, aiModels.providerId],
+        targetWhere: isNull(aiModels.workspaceId),
       });
   };
 
@@ -279,6 +286,7 @@ export class AiModelModel {
           .onConflictDoUpdate({
             set: updateValues,
             target: [aiModels.id, aiModels.userId, aiModels.providerId],
+            targetWhere: isNull(aiModels.workspaceId),
           });
       });
 

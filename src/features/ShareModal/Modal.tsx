@@ -1,8 +1,8 @@
 'use client';
 
 import { type ConversationContext } from '@lobechat/types';
-import { type ModalInstance } from '@lobehub/ui';
-import { createModal, Flexbox, Segmented, Skeleton } from '@lobehub/ui';
+import { Flexbox, Segmented, Skeleton } from '@lobehub/ui';
+import { createModal, type ModalInstance } from '@lobehub/ui/base-ui';
 import { t } from 'i18next';
 import { memo, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -92,23 +92,20 @@ export const openShareModal = ({
   context,
 }: OpenShareModalOptions = {}): ModalInstance =>
   createModal({
-    afterClose,
-    allowFullscreen: true,
-    centered: true,
-    children: (
+    content: (
       <ShareDataProvider context={context}>
         <ShareModalContent />
       </ShareDataProvider>
     ),
-    destroyOnHidden: true,
     footer: null,
-    height: '80vh',
-    styles: {
-      body: {
-        height: '80vh',
-      },
+    maskClosable: true,
+    onOpenChangeComplete: (open) => {
+      if (!open) afterClose?.();
     },
-    title: t('share', { ns: 'common' }),
+    styles: {
+      content: { height: 'min(80vh, 800px)' },
+    },
+    title: t('shareModal.title', { ns: 'chat' }),
     width: 'min(90vw, 1024px)',
   });
 

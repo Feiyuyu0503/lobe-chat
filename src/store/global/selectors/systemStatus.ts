@@ -7,6 +7,18 @@ import {
 
 export const systemStatus = (s: GlobalState) => s.status;
 
+export const NAV_PANEL_MIN_WIDTH = 240;
+export const NAV_PANEL_MAX_WIDTH = 400;
+
+const normalizeNavPanelWidth = (width: number | string | undefined): number => {
+  const parsed = typeof width === 'string' ? Number.parseInt(width) : width;
+  const fallback = INITIAL_STATUS.leftPanelWidth;
+
+  if (!parsed || !Number.isFinite(parsed)) return fallback;
+
+  return Math.min(NAV_PANEL_MAX_WIDTH, Math.max(NAV_PANEL_MIN_WIDTH, parsed));
+};
+
 const agentBuilderPanelWidth = (s: GlobalState) => s.status.agentBuilderPanelWidth || 360;
 
 const sessionGroupKeys = (s: GlobalState): string[] =>
@@ -42,7 +54,7 @@ const taskKanbanHiddenColumns = (s: GlobalState): string[] =>
 const taskKanbanHiddenPanelCollapsed = (s: GlobalState): boolean =>
   s.status.taskKanbanHiddenPanelCollapsed ?? false;
 
-export const DEFAULT_HIDDEN_SECTIONS: string[] = ['memory'];
+export const DEFAULT_HIDDEN_SECTIONS: string[] = [];
 
 const hiddenSidebarSections = (s: GlobalState): string[] =>
   s.status.hiddenSidebarSections ?? DEFAULT_HIDDEN_SECTIONS;
@@ -50,11 +62,16 @@ const hiddenSidebarSections = (s: GlobalState): string[] =>
 const sidebarExpandedKeys = (s: GlobalState): string[] =>
   s.status.sidebarExpandedKeys ?? DEFAULT_HOME_SIDEBAR_EXPANDED_KEYS;
 
+/** Sentinel id representing the flex spacer slot. Its position in `sidebarItems`
+ * determines where the sidebar pushes items to the bottom. */
+export const SIDEBAR_SPACER_ID = '__spacer__';
+
 export const DEFAULT_SIDEBAR_ITEMS: string[] = [
   'tasks',
   'pages',
   'recents',
   'agent',
+  SIDEBAR_SPACER_ID,
   'image',
   'community',
   'resource',
@@ -64,11 +81,25 @@ export const DEFAULT_SIDEBAR_ITEMS: string[] = [
 /** Items that must stay contiguous in the sidebar list (accordion block). */
 export const SIDEBAR_ACCORDION_KEYS = new Set(['recents', 'agent']);
 
+const DEFAULT_BOTTOM_KEYS = new Set(
+  DEFAULT_SIDEBAR_ITEMS.slice(DEFAULT_SIDEBAR_ITEMS.indexOf(SIDEBAR_SPACER_ID) + 1),
+);
+
+/** Insert the spacer sentinel into `order` if missing — anchored before the first
+ * default "bottom" item (image/community/...), falling back to the end. */
+const ensureSpacer = (order: string[]): string[] => {
+  if (order.includes(SIDEBAR_SPACER_ID)) return order;
+  const insertAt = order.findIndex((k) => DEFAULT_BOTTOM_KEYS.has(k));
+  if (insertAt === -1) return [...order, SIDEBAR_SPACER_ID];
+  return [...order.slice(0, insertAt), SIDEBAR_SPACER_ID, ...order.slice(insertAt)];
+};
+
 /** Append any known keys missing from `order` so new items don't disappear on upgrade. */
 const withAllKnownKeys = (order: string[]): string[] => {
   const present = new Set(order);
-  const missing = DEFAULT_SIDEBAR_ITEMS.filter((k) => !present.has(k));
-  return missing.length === 0 ? order : [...order, ...missing];
+  const missing = DEFAULT_SIDEBAR_ITEMS.filter((k) => k !== SIDEBAR_SPACER_ID && !present.has(k));
+  const withMissing = missing.length === 0 ? order : [...order, ...missing];
+  return ensureSpacer(withMissing);
 };
 
 const accordionIndices = (items: string[]): number[] => {
@@ -172,6 +203,8 @@ const sidebarItems = (s: GlobalState): string[] => {
 const showSystemRole = (s: GlobalState) => s.status.showSystemRole;
 const mobileShowTopic = (s: GlobalState) => s.status.mobileShowTopic;
 const mobileShowPortal = (s: GlobalState) => s.status.mobileShowPortal;
+const showAgentBuilderPanel = (s: GlobalState) =>
+  !s.status.zenMode && s.status.showAgentBuilderPanel;
 const showRightPanel = (s: GlobalState) => !s.status.zenMode && s.status.showRightPanel;
 const showLeftPanel = (s: GlobalState) => !s.status.zenMode && s.status.showLeftPanel;
 const showPageAgentPanel = (s: GlobalState) => !s.status.zenMode && s.status.showPageAgentPanel;
@@ -192,8 +225,7 @@ const pageAgentPanelWidth = (s: GlobalState) => s.status.pageAgentPanelWidth || 
 const showChatHeader = (s: GlobalState) => !s.status.zenMode;
 const inZenMode = (s: GlobalState) => s.status.zenMode;
 const leftPanelWidth = (s: GlobalState): number => {
-  const width = s.status.leftPanelWidth;
-  return typeof width === 'string' ? Number.parseInt(width) : width;
+  return normalizeNavPanelWidth(s.status.leftPanelWidth);
 };
 const portalWidth = (s: GlobalState) => s.status.portalWidth || 400;
 const filePanelWidth = (s: GlobalState) => s.status.filePanelWidth;
@@ -279,6 +311,7 @@ export const systemStatusSelectors = {
   sidebarExpandedKeys,
   sidebarItems,
   sessionGroupKeys,
+  showAgentBuilderPanel,
   showChatHeader,
   showFilePanel,
   showImagePanel,

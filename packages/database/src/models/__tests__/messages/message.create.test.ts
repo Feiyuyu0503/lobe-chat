@@ -1,5 +1,5 @@
 import type { DBMessageItem } from '@lobechat/types';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { uuid } from '@/utils/uuid';
@@ -16,6 +16,7 @@ import {
   messages,
   messagesFiles,
   sessions,
+  topics,
   users,
 } from '../../../schemas';
 import type { LobeChatDatabase } from '../../../type';
@@ -93,6 +94,33 @@ describe('MessageModel Create Tests', () => {
       expect(result.userId).toBe(userId);
     });
 
+    it('promotes metadata.usage into the dedicated usage column on create', async () => {
+      const usage = { cost: 0.004, totalInputTokens: 70, totalOutputTokens: 30, totalTokens: 100 };
+      const result = await messageModel.create({
+        content: 'answer',
+        metadata: { usage } as any,
+        role: 'assistant',
+        sessionId: '1',
+      });
+
+      expect(result.usage).toEqual(usage);
+      // metadata.usage stays written for backward-compatible reads
+      expect((result.metadata as any).usage).toEqual(usage);
+    });
+
+    it('prefers a top-level usage over metadata.usage on create', async () => {
+      const topLevel = { cost: 0.01, totalTokens: 200 };
+      const result = await messageModel.create({
+        content: 'answer',
+        metadata: { usage: { cost: 0.004, totalTokens: 100 } } as any,
+        role: 'assistant',
+        sessionId: '1',
+        usage: topLevel as any,
+      });
+
+      expect(result.usage).toEqual(topLevel);
+    });
+
     it('should generate message ID automatically', async () => {
       // Call createMessage method
       await messageModel.create({
@@ -104,7 +132,7 @@ describe('MessageModel Create Tests', () => {
       // Assert result
       const result = await serverDB.select().from(messages).where(eq(messages.userId, userId));
       expect(result[0].id).toBeDefined();
-      expect(result[0].id).toHaveLength(18);
+      expect(result[0].id).toHaveLength(22);
     });
 
     it('should create a tool message and insert into messagePlugins table', async () => {
@@ -246,6 +274,120 @@ describe('MessageModel Create Tests', () => {
       // The stored data should not contain null bytes
       expect(JSON.stringify(pluginResult[0].state)).not.toContain('\u0000');
       expect(pluginResult[0].arguments).not.toContain('\u0000');
+    });
+
+    it('should create user and assistant messages with one topic touch', async () => {
+      await serverDB.insert(topics).values({
+        id: 'topic-pair',
+        sessionId: '1',
+        title: 'Topic pair',
+        userId,
+      });
+
+      const timingEvents: string[] = [];
+      const result = await messageModel.createUserAndAssistantMessages(
+        {
+          assistantMessage: {
+            content: '',
+            model: 'gpt-4o',
+            provider: 'openai',
+            role: 'assistant',
+            sessionId: '1',
+            topicId: 'topic-pair',
+          },
+          userMessage: {
+            content: 'hello',
+            files: ['f1'],
+            role: 'user',
+            sessionId: '1',
+            topicId: 'topic-pair',
+          },
+        },
+        {
+          timing: {
+            log: (event) => timingEvents.push(event),
+          },
+        },
+      );
+
+      expect(result.userMessage.id).toBeDefined();
+      expect(result.assistantMessage.id).toBeDefined();
+      expect(result.assistantMessage.parentId).toBe(result.userMessage.id);
+      expect(result.userMessage.createdAt.getTime()).toBeLessThan(
+        result.assistantMessage.createdAt.getTime(),
+      );
+
+      const dbMessages = await serverDB
+        .select()
+        .from(messages)
+        .where(eq(messages.userId, userId))
+        .orderBy(asc(messages.createdAt));
+
+      expect(dbMessages.map((message) => message.id)).toEqual([
+        result.userMessage.id,
+        result.assistantMessage.id,
+      ]);
+
+      const messageFiles = await serverDB
+        .select()
+        .from(messagesFiles)
+        .where(eq(messagesFiles.messageId, result.userMessage.id));
+
+      expect(messageFiles).toHaveLength(1);
+      expect(
+        timingEvents.filter(
+          (event) => event === 'db.message.createUserAndAssistant.messages.insert:start',
+        ),
+      ).toHaveLength(1);
+      expect(timingEvents.some((event) => event.includes('topic.touchUpdatedAt'))).toBe(false);
+    });
+
+    it('should not touch topic updatedAt when creating a pair for an existing topic', async () => {
+      await serverDB.insert(topics).values({
+        id: 'topic-pair-no-touch',
+        sessionId: '1',
+        title: 'Topic pair no touch',
+        updatedAt: new Date('2024-01-01T00:00:00Z'),
+        userId,
+      });
+
+      const timingEvents: string[] = [];
+      const result = await messageModel.createUserAndAssistantMessages(
+        {
+          assistantMessage: {
+            content: '',
+            model: 'gpt-4o',
+            provider: 'openai',
+            role: 'assistant',
+            sessionId: '1',
+            topicId: 'topic-pair-no-touch',
+          },
+          userMessage: {
+            content: 'hello',
+            role: 'user',
+            sessionId: '1',
+            topicId: 'topic-pair-no-touch',
+          },
+        },
+        {
+          timing: {
+            log: (event) => timingEvents.push(event),
+          },
+        },
+      );
+      const topic = await serverDB.query.topics.findFirst({
+        where: (table, { eq }) => eq(table.id, 'topic-pair-no-touch'),
+      });
+
+      expect(result.userMessage.id).toBeDefined();
+      expect(result.assistantMessage.parentId).toBe(result.userMessage.id);
+      expect(
+        timingEvents.filter(
+          (event) => event === 'db.message.createUserAndAssistant.messages.insert:start',
+        ),
+      ).toHaveLength(1);
+      expect(timingEvents.some((event) => event.includes('topic.touchUpdatedAt'))).toBe(false);
+      expect(topic?.updatedAt.toISOString()).toBe('2024-01-01T00:00:00.000Z');
     });
 
     describe('create with advanced parameters', () => {

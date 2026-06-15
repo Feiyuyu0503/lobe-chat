@@ -1,6 +1,13 @@
 import type { ChatModelCard } from '@lobechat/types';
-import type { AIBaseModelCard, AiModelSettings, AiModelType, ExtendParamsType } from 'model-bank';
-import { AiModelTypeSchema } from 'model-bank';
+import type {
+  AIBaseModelCard,
+  AiFullModelCard,
+  AiModelSettings,
+  AiModelType,
+  ExtendParamsType,
+  LobeDefaultAiModelListItem,
+} from 'model-bank';
+import { AiModelTypeSchema, ModelProvider } from 'model-bank';
 
 import type { ModelProviderKey } from '../types';
 
@@ -49,6 +56,11 @@ export const MODEL_LIST_CONFIGS = {
     reasoningKeywords: ['ring-'],
     visionKeywords: ['ming-'],
   },
+  internlm: {
+    functionCallKeywords: ['internlm', 'intern-s'],
+    reasoningKeywords: ['intern-s'],
+    visionKeywords: ['internvl', 'intern-s'],
+  },
   llama: {
     functionCallKeywords: ['llama-3.2', 'llama-3.3', 'llama-4'],
     reasoningKeywords: [],
@@ -57,12 +69,12 @@ export const MODEL_LIST_CONFIGS = {
   longcat: {
     functionCallKeywords: ['longcat'],
     reasoningKeywords: ['thinking'],
-    visionKeywords: [],
+    visionKeywords: ['omni'],
   },
   minimax: {
     functionCallKeywords: ['minimax'],
     reasoningKeywords: ['-m'],
-    visionKeywords: ['-vl', 'Text-01'],
+    visionKeywords: ['-vl', 'Text-01', '-m3'],
   },
   mistral: {
     functionCallKeywords: ['mistral', 'ministral', 'pixtral'],
@@ -92,7 +104,7 @@ export const MODEL_LIST_CONFIGS = {
       'qwen3',
     ],
     reasoningKeywords: ['qvq', 'qwq', 'qwen3', '!-instruct-', '!-coder-'],
-    visionKeywords: ['qvq', '-vl', '-omni'],
+    visionKeywords: ['qvq', '-vl', '-omni', 'qwen3.'],
   },
   replicate: {
     imageOutputKeywords: [
@@ -152,6 +164,7 @@ export const MODEL_OWNER_DETECTION_CONFIG = {
   deepseek: ['deepseek'],
   google: ['gemini', 'imagen', 'gemma'],
   inclusionai: ['ling-', 'ming-', 'ring-'],
+  internlm: ['internvl', 'internlm', 'intern-'],
   llama: ['llama', 'llava'],
   longcat: ['longcat'],
   minimax: ['minimax'],
@@ -168,6 +181,13 @@ export const MODEL_OWNER_DETECTION_CONFIG = {
   zeroone: ['yi-'],
   zhipu: ['glm'],
 } as const;
+
+export const isDeepSeekV4FamilyModel = (model: string | undefined): boolean =>
+  typeof model === 'string' && model.toLowerCase().includes('deepseek-v4');
+
+export const isDeepSeekThinkingEligibleModel = (model: string | undefined): boolean =>
+  typeof model === 'string' &&
+  (model.toLowerCase().includes('deepseek-reasoner') || isDeepSeekV4FamilyModel(model));
 
 // Image model keyword configuration
 export const IMAGE_MODEL_KEYWORDS = [
@@ -194,6 +214,10 @@ export const IMAGE_MODEL_KEYWORDS = [
 export const EMBEDDING_MODEL_KEYWORDS = ['embedding', 'embed', 'bge', 'm3e'] as const;
 
 const AI_MODEL_TYPE_SET = new Set<AiModelType>(AiModelTypeSchema.options);
+
+interface BusinessModelConfigModule {
+  loadModels: () => Promise<LobeDefaultAiModelListItem[]>;
+}
 
 const normalizeModelType = (value: unknown): AiModelType | undefined => {
   if (typeof value !== 'string') return undefined;
@@ -446,19 +470,29 @@ const mergeSettings = (
  * @param provider Model provider
  * @returns Local configuration of the model provider
  */
-const getProviderLocalConfig = async (provider?: ModelProviderKey): Promise<any[] | null> => {
-  let providerLocalConfig: any[] | null = null;
-  if (provider) {
-    try {
-      const modules = await import('model-bank');
+const getProviderLocalConfig = async (
+  provider?: ModelProviderKey,
+): Promise<AiFullModelCard[] | null> => {
+  if (!provider) return null;
 
-      providerLocalConfig = modules[provider];
-    } catch {
-      // If configuration file doesn't exist or import fails, keep as null
-      providerLocalConfig = null;
-    }
+  if (provider === ModelProvider.LobeHub) {
+    const { loadModels } =
+      (await import('@lobechat/business-model-bank/model-config')) as BusinessModelConfigModule;
+    const models = await loadModels();
+    return models.filter((model) => model.providerId === ModelProvider.LobeHub);
   }
-  return providerLocalConfig;
+
+  try {
+    const modules = (await import('model-bank')) as unknown as Record<
+      ModelProviderKey,
+      AiFullModelCard[] | undefined
+    >;
+
+    return modules[provider] ?? null;
+  } catch {
+    // If configuration file doesn't exist or import fails, keep as null
+    return null;
+  }
 };
 
 /**
@@ -635,13 +669,18 @@ export const processModelList = async (
   config: ModelProcessorConfig,
   provider?: keyof typeof MODEL_LIST_CONFIGS,
 ): Promise<ChatModelCard[]> => {
-  const { LOBE_DEFAULT_MODEL_LIST } = await import('model-bank');
+  const { loadModels } = await import('model-bank');
+  const builtinModels = await loadModels();
 
   // If provider is provided, try to get the local configuration for that provider
   const providerLocalConfig = await getProviderLocalConfig(provider as ModelProviderKey);
 
   return Promise.all(
     modelList.map(async (model) => {
+      if (!model?.id) {
+        return undefined;
+      }
+
       let knownModel: any = null;
 
       // If provider is provided, prioritize using provider-specific configuration
@@ -651,9 +690,7 @@ export const processModelList = async (
 
       // If not found, fall back to global configuration
       if (!knownModel) {
-        knownModel = LOBE_DEFAULT_MODEL_LIST.find(
-          (m) => model.id.toLowerCase() === m.id.toLowerCase(),
-        );
+        knownModel = builtinModels.find((m) => model.id.toLowerCase() === m.id.toLowerCase());
       }
 
       const processedModel = processModelCard(model, config, knownModel);
@@ -688,7 +725,9 @@ export const processMultiProviderModelList = async (
   modelList: Array<{ id: string }>,
   providerid?: ModelProviderKey,
 ): Promise<ChatModelCard[]> => {
-  const { LOBE_DEFAULT_MODEL_LIST } = await import('model-bank');
+  const { loadModels } =
+    (await import('@lobechat/business-model-bank/model-config')) as BusinessModelConfigModule;
+  const builtinModels = await loadModels();
 
   // If providerid is provided, try to get the local configuration for that provider
   const providerLocalConfig = await getProviderLocalConfig(providerid);
@@ -703,9 +742,7 @@ export const processMultiProviderModelList = async (
 
       // If not found, fall back to global configuration
       if (!knownModel) {
-        knownModel = LOBE_DEFAULT_MODEL_LIST.find(
-          (m) => model.id.toLowerCase() === m.id.toLowerCase(),
-        );
+        knownModel = builtinModels.find((m) => model.id.toLowerCase() === m.id.toLowerCase());
       }
 
       const includeKnownExtendParams =

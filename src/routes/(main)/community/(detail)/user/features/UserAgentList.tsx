@@ -1,7 +1,7 @@
 'use client';
 
-import { Flexbox, Grid, Tag, Text } from '@lobehub/ui';
-import { Input, Pagination } from 'antd';
+import { Flexbox, Grid, SearchBar, Tag, Text } from '@lobehub/ui';
+import { Pagination } from 'antd';
 import { memo, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -23,7 +23,9 @@ const UserAgentList = memo<UserAgentListProps>(({ rows = 4, pageSize = 8 }) => {
     forkedAgents = [],
     favoriteAgents = [],
     isOwner,
+    user,
   } = useUserDetailContext();
+  const isOrg = user.type === 'organization';
   const [currentPage, setCurrentPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<StatusFilterValue>('published');
   const [searchQuery, setSearchQuery] = useState('');
@@ -71,8 +73,14 @@ const UserAgentList = memo<UserAgentListProps>(({ rows = 4, pageSize = 8 }) => {
   if (agents.length === 0 && forkedAgents.length === 0)
     return (
       <AssistantEmpty
-        description={isOwner ? t('user.noAgents.ownerDescription') : t('user.noAgents')}
         title={t('user.noAgents.title')}
+        description={
+          isOwner
+            ? t('user.noAgents.ownerDescription')
+            : isOrg
+              ? t('user.org.noAgents')
+              : t('user.noAgents')
+        }
       />
     );
 
@@ -89,10 +97,10 @@ const UserAgentList = memo<UserAgentListProps>(({ rows = 4, pageSize = 8 }) => {
         </Flexbox>
         {isOwner && (
           <Flexbox horizontal align={'center'} gap={8}>
-            <Input.Search
+            <SearchBar
               allowClear
               placeholder={t('user.searchPlaceholder')}
-              style={{ width: 200 }}
+              styles={{ input: { height: 31, width: 320 } }}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />

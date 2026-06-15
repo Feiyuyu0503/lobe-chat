@@ -1,6 +1,6 @@
 ---
 name: review-checklist
-description: 'Common recurring mistakes in LobeHub code review — console leftovers, missing return await, hardcoded secrets, hardcoded i18n strings, desktop router pair drift, antd vs @lobehub/ui, non-idempotent migrations, cloud impact red flags. Use as a quick checklist when reviewing PRs, diffs, or branch changes.'
+description: 'LobeHub code review checklist. Use when reviewing a PR, diff, or branch for console leftovers, return await, secrets, i18n, desktop router drift, UI imports, migrations, or cloud impact.'
 user-invocable: false
 ---
 
@@ -22,6 +22,7 @@ user-invocable: false
 
 - Bug fixes must include tests covering the fixed scenario
 - New logic (services, store actions, utilities) should have test coverage
+- **New database Model/Repository** (`packages/database/src/models/**`, `src/repositories/**`) must ship a sibling `__tests__/<name>.test.ts` — incl. user-isolation tests; BM25 search guarded by `describe.skipIf(!isServerDB)` (see `/testing` → `db-model-test.md`)
 - Existing tests still cover the changed behavior?
 - Prefer `vi.spyOn` over `vi.mock` (see `/testing` skill)
 

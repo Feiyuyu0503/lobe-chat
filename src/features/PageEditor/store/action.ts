@@ -1,4 +1,5 @@
 import { EDITOR_DEBOUNCE_TIME, EDITOR_MAX_WAIT, isDesktop } from '@lobechat/const';
+import { confirmModal } from '@lobehub/ui/base-ui';
 import debug from 'debug';
 import { debounce } from 'es-toolkit/compat';
 import { type StateCreator } from 'zustand';
@@ -19,13 +20,15 @@ export interface Action {
   handleDelete: (
     t: (key: string) => string,
     message: any,
-    modal: any,
     onDeleteCallback?: () => void,
   ) => Promise<void>;
   handleTitleSubmit: () => Promise<void>;
   initMeta: (title?: string, emoji?: string) => void;
   performMetaSave: () => Promise<void>;
   setEmoji: (emoji: string | undefined) => void;
+  /** True while the lock state is still being resolved (editor read-only meanwhile). */
+  setLockPending: (pending: boolean) => void;
+  setLockState: (lock: { holderId: string | null; lockedByOther: boolean }) => void;
   setRightPanelMode: (mode: RightPanelMode) => void;
   setTitle: (title: string) => void;
   triggerDebouncedMetaSave: () => void;
@@ -75,12 +78,12 @@ export const store: (initState?: Partial<State>) => StateCreator<Store> =
         }
       },
 
-      handleDelete: async (t, message, modal, onDeleteCallback) => {
+      handleDelete: async (t, message, onDeleteCallback) => {
         const { documentId } = get();
         if (!documentId) return;
 
         return new Promise((resolve, reject) => {
-          modal.confirm({
+          confirmModal({
             cancelText: t('cancel'),
             content: t('pageEditor.deleteConfirm.content'),
             okButtonProps: { danger: true },
@@ -178,6 +181,16 @@ export const store: (initState?: Partial<State>) => StateCreator<Store> =
         if (isDirty) {
           triggerDebouncedMetaSave();
         }
+      },
+
+      setLockPending: (pending) => {
+        if (get().isLockPending !== pending) set({ isLockPending: pending });
+      },
+
+      setLockState: ({ holderId, lockedByOther }) => {
+        const { isLockedByOther, lockHolderId } = get();
+        if (isLockedByOther === lockedByOther && lockHolderId === holderId) return;
+        set({ isLockedByOther: lockedByOther, lockHolderId: holderId });
       },
 
       setRightPanelMode: (rightPanelMode) => {

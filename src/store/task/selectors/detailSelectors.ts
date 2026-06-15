@@ -20,11 +20,15 @@ const activeTaskPriority = (s: TaskStoreState) => activeTaskDetail(s)?.priority 
 
 const activeTaskInstruction = (s: TaskStoreState) => activeTaskDetail(s)?.instruction;
 
+const activeTaskEditorData = (s: TaskStoreState) => activeTaskDetail(s)?.editorData;
+
+const activeTaskFiles = (s: TaskStoreState) => activeTaskDetail(s)?.files;
+
 const activeTaskDescription = (s: TaskStoreState) => activeTaskDetail(s)?.description;
 
 const activeTaskAgentId = (s: TaskStoreState) => activeTaskDetail(s)?.agentId;
 
-// TODO [LOBE-6634]: Once the backend getTaskDetail returns model/provider, read from detail.model / detail.provider instead
+// TODO: Once the frontend store switches to reading from detail.model / detail.provider returned by the backend getTaskDetail procedure
 const activeTaskModel = (s: TaskStoreState) =>
   activeTaskDetail(s)?.config?.model as string | undefined;
 
@@ -60,6 +64,8 @@ const activeTaskReview = (s: TaskStoreState) => activeTaskDetail(s)?.review;
 
 const activeTaskWorkspace = (s: TaskStoreState) => activeTaskDetail(s)?.workspace ?? [];
 
+const activeTaskWorkspaceId = (s: TaskStoreState) => activeTaskDetail(s)?.workspaceId;
+
 const activeTaskError = (s: TaskStoreState) => activeTaskDetail(s)?.error;
 
 const activeTaskTopicCount = (s: TaskStoreState) => activeTaskDetail(s)?.topicCount ?? 0;
@@ -93,7 +99,9 @@ export const taskDetailSelectors = {
   activeTaskDependencies,
   activeTaskDescription,
   activeTaskDetail,
+  activeTaskEditorData,
   activeTaskError,
+  activeTaskFiles,
   activeTaskId,
   activeTaskInstruction,
   activeTaskName,
@@ -109,6 +117,7 @@ export const taskDetailSelectors = {
   activeTaskSubtasks,
   activeTaskTopicCount,
   activeTaskWorkspace,
+  activeTaskWorkspaceId,
   activeTopicDrawerTopicId,
   canCancelActiveTask,
   canPauseActiveTask,

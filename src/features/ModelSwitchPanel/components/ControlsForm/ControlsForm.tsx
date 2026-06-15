@@ -8,6 +8,7 @@ import { Trans, useTranslation } from 'react-i18next';
 
 import { useAgentId } from '@/features/ChatInput/hooks/useAgentId';
 import { useUpdateAgentConfig } from '@/features/ChatInput/hooks/useUpdateAgentConfig';
+import { resolveDefaultThinkingLevelForModel } from '@/services/chat/mecha/modelParamsResolver';
 import { useAgentStore } from '@/store/agent';
 import { agentByIdSelectors, chatConfigByIdSelectors } from '@/store/agent/selectors';
 import { aiModelSelectors, useAiInfraStore } from '@/store/aiInfra';
@@ -32,16 +33,18 @@ import ReasoningEffortSlider from './ReasoningEffortSlider';
 import ReasoningTokenSlider from './ReasoningTokenSlider';
 import ReasoningTokenSlider32k from './ReasoningTokenSlider32k';
 import ReasoningTokenSlider80k from './ReasoningTokenSlider80k';
+import Ring26ReasoningEffortSlider from './Ring26ReasoningEffortSlider';
+import Step3_5ReasoningEffortSlider from './Step3_5ReasoningEffortSlider';
 import TextVerbositySlider from './TextVerbositySlider';
 import ThinkingBudgetSlider from './ThinkingBudgetSlider';
 import ThinkingLevel2Slider from './ThinkingLevel2Slider';
 import ThinkingLevel3Slider from './ThinkingLevel3Slider';
 import ThinkingLevel4Slider from './ThinkingLevel4Slider';
-import ThinkingLevel5Slider from './ThinkingLevel5Slider';
 import ThinkingLevelSlider from './ThinkingLevelSlider';
 import ThinkingSlider from './ThinkingSlider';
 
 interface ControlsFormProps {
+  disabled?: boolean;
   model?: string;
   onUpdatingChange?: (updating: boolean) => void;
   provider?: string;
@@ -62,7 +65,7 @@ const resolveEnableReasoningInitialValue = (config: LobeAgentChatConfig) => {
 };
 
 const ControlsForm = memo<ControlsFormProps>(
-  ({ model: modelProp, onUpdatingChange, provider: providerProp }) => {
+  ({ disabled, model: modelProp, onUpdatingChange, provider: providerProp }) => {
     const { t } = useTranslation('chat');
     const agentId = useAgentId();
     const { updateAgentChatConfig } = useUpdateAgentConfig();
@@ -99,6 +102,7 @@ const ControlsForm = memo<ControlsFormProps>(
     const screens = Grid.useBreakpoint();
     const isNarrow = !screens.sm;
     const gpt52ReasoningEffortDefaultValue = model === 'gpt-5.5' ? 'medium' : 'none';
+    const thinkingLevelDefaultValue = resolveDefaultThinkingLevelForModel(model);
 
     const descWide = { display: 'inline-block', width: 300 } as const;
     const descNarrow = {
@@ -109,7 +113,7 @@ const ControlsForm = memo<ControlsFormProps>(
 
     const items = [
       {
-        children: <ContextCachingSwitch />,
+        children: <ContextCachingSwitch disabled={disabled} />,
         desc: (
           <span style={isNarrow ? descNarrow : descWide}>
             <Trans i18nKey={'extendParams.disableContextCaching.desc'} ns={'chat'}>
@@ -131,7 +135,7 @@ const ControlsForm = memo<ControlsFormProps>(
         name: 'disableContextCaching',
       },
       {
-        children: <Switch size={'small'} />,
+        children: <Switch disabled={disabled} size={'small'} />,
         desc: (
           <span style={isNarrow ? descNarrow : descWide}>
             <Trans i18nKey={'extendParams.enableReasoning.desc'} ns={'chat'}>
@@ -143,6 +147,18 @@ const ControlsForm = memo<ControlsFormProps>(
         layout: isNarrow ? 'vertical' : 'horizontal',
         minWidth: undefined,
         name: 'enableReasoning',
+      },
+      {
+        children: <Switch disabled={disabled} size={'small'} />,
+        desc: isNarrow ? (
+          <span style={descNarrow}>{t('extendParams.preserveThinking.desc')}</span>
+        ) : (
+          t('extendParams.preserveThinking.desc')
+        ),
+        label: t('extendParams.preserveThinking.title'),
+        layout: isNarrow ? 'vertical' : 'horizontal',
+        minWidth: undefined,
+        name: 'preserveThinking',
       },
       {
         children: <Switch size={'small'} />,
@@ -315,12 +331,34 @@ const ControlsForm = memo<ControlsFormProps>(
         },
       },
       {
+        children: <Ring26ReasoningEffortSlider />,
+        desc: 'reasoning_effort',
+        label: t('extendParams.reasoningEffort.title'),
+        layout: 'vertical',
+        minWidth: undefined,
+        name: 'ring2_6ReasoningEffort',
+        style: {
+          paddingBottom: 0,
+        },
+      },
+      {
         children: <CodexMaxReasoningEffortSlider />,
         desc: 'reasoning_effort',
         label: t('extendParams.reasoningEffort.title'),
         layout: 'vertical',
         minWidth: undefined,
         name: 'codexMaxReasoningEffort',
+        style: {
+          paddingBottom: 0,
+        },
+      },
+      {
+        children: <Step3_5ReasoningEffortSlider />,
+        desc: 'reasoning_effort',
+        label: t('extendParams.reasoningEffort.title'),
+        layout: 'vertical',
+        minWidth: undefined,
+        name: 'step3_5ReasoningEffort',
         style: {
           paddingBottom: 0,
         },
@@ -348,7 +386,7 @@ const ControlsForm = memo<ControlsFormProps>(
         tag: 'thinkingBudget',
       },
       {
-        children: <Switch size={'small'} />,
+        children: <Switch disabled={disabled} size={'small'} />,
         desc: isNarrow ? (
           <span style={descNarrow}>{t('extendParams.urlContext.desc')}</span>
         ) : (
@@ -372,7 +410,7 @@ const ControlsForm = memo<ControlsFormProps>(
         },
       },
       {
-        children: <ThinkingLevelSlider />,
+        children: <ThinkingLevelSlider defaultValue={thinkingLevelDefaultValue} />,
         label: t('extendParams.thinkingLevel.title'),
         layout: 'vertical',
         minWidth: undefined,
@@ -410,17 +448,6 @@ const ControlsForm = memo<ControlsFormProps>(
         layout: 'vertical',
         minWidth: undefined,
         name: 'thinkingLevel4',
-        style: {
-          paddingBottom: 0,
-        },
-        desc: 'thinkingLevel',
-      },
-      {
-        children: <ThinkingLevel5Slider />,
-        label: t('extendParams.thinkingLevel.title'),
-        layout: 'vertical',
-        minWidth: undefined,
-        name: 'thinkingLevel5',
         style: {
           paddingBottom: 0,
         },
@@ -473,27 +500,35 @@ const ControlsForm = memo<ControlsFormProps>(
     ].filter(Boolean) as FormItemProps[];
 
     return (
-      <Form
-        form={form}
-        initialValues={initialValues}
-        itemsType={'flat'}
-        size={'small'}
-        style={{ fontSize: 12 }}
-        variant={'borderless'}
-        items={
-          (modelExtendParams || [])
-            .map((item: any) => items.find((i) => i.name === item))
-            .filter(Boolean) as FormItemProps[]
-        }
-        onValuesChange={async (values) => {
-          onUpdatingChange?.(true);
-          try {
-            await updateAgentChatConfig(values);
-          } finally {
-            onUpdatingChange?.(false);
-          }
+      <div
+        style={{
+          opacity: disabled ? 0.5 : undefined,
+          pointerEvents: disabled ? 'none' : undefined,
         }}
-      />
+      >
+        <Form
+          form={form}
+          initialValues={initialValues}
+          itemsType={'flat'}
+          size={'small'}
+          style={{ fontSize: 12 }}
+          variant={'borderless'}
+          items={
+            (modelExtendParams || [])
+              .map((item: any) => items.find((i) => i.name === item))
+              .filter(Boolean) as FormItemProps[]
+          }
+          onValuesChange={async (values) => {
+            if (disabled) return;
+            onUpdatingChange?.(true);
+            try {
+              await updateAgentChatConfig(values);
+            } finally {
+              onUpdatingChange?.(false);
+            }
+          }}
+        />
+      </div>
     );
   },
 );

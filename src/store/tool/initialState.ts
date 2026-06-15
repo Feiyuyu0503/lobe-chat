@@ -1,5 +1,10 @@
+import {
+  type AgentDocumentSkillsState,
+  initialAgentDocumentSkillsState,
+} from './slices/agentDocumentSkills/initialState';
 import { type AgentSkillsState, initialAgentSkillsState } from './slices/agentSkills/initialState';
 import { type BuiltinToolState, initialBuiltinToolState } from './slices/builtin/initialState';
+import { type ConnectorState, initialConnectorState } from './slices/connector/initialState';
 import {
   type CustomPluginState,
   initialCustomPluginState,
@@ -12,15 +17,18 @@ import {
 import { initialMCPStoreState, type MCPStoreState } from './slices/mcpStore/initialState';
 import { initialPluginState, type PluginState } from './slices/plugin/initialState';
 
-export type ToolStoreState = PluginState &
+export type ToolStoreState = ConnectorState &
+  PluginState &
   CustomPluginState &
   BuiltinToolState &
   MCPStoreState &
   KlavisStoreState &
   LobehubSkillStoreState &
-  AgentSkillsState;
+  AgentSkillsState &
+  AgentDocumentSkillsState;
 
 export const initialState: ToolStoreState = {
+  ...initialConnectorState,
   ...initialPluginState,
   ...initialCustomPluginState,
   ...initialBuiltinToolState,
@@ -28,4 +36,5 @@ export const initialState: ToolStoreState = {
   ...initialKlavisStoreState,
   ...initialLobehubSkillStoreState,
   ...initialAgentSkillsState,
+  ...initialAgentDocumentSkillsState,
 };

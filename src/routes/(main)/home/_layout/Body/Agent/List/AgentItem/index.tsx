@@ -1,4 +1,3 @@
-import { SESSION_CHAT_URL } from '@lobechat/const';
 import { HETEROGENEOUS_TYPE_LABELS } from '@lobechat/heterogeneous-agents';
 import { type SidebarAgentItem } from '@lobechat/types';
 import { ActionIcon, Flexbox, Icon, Tag } from '@lobehub/ui';
@@ -7,18 +6,18 @@ import { Loader2, PinIcon } from 'lucide-react';
 import { type CSSProperties, type DragEvent } from 'react';
 import { memo, useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
 
 import NavItem from '@/features/NavPanel/components/NavItem';
+import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
 import { usePrefetchAgent } from '@/hooks/usePrefetchAgent';
 import { useChatStore } from '@/store/chat';
 import { operationSelectors } from '@/store/chat/selectors';
 import { useGlobalStore } from '@/store/global';
 import { useHomeStore } from '@/store/home';
-import { prefetchRoute } from '@/utils/router';
 
 import { useAgentModal } from '../../ModalProvider';
 import Actions from '../Item/Actions';
+import { usePreservedAgentUrl } from '../usePreservedAgentUrl';
 import Avatar from './Avatar';
 import { useAgentDropdownMenu } from './useDropdownMenu';
 
@@ -116,14 +115,12 @@ const AgentItem = memo<AgentItemProps>(({ item, style, className, onNavigate }) 
     displayTitle
   );
 
-  // Get URL for this agent
-  const agentUrl = SESSION_CHAT_URL(id, false);
+  const agentUrl = usePreservedAgentUrl(id);
 
   // Memoize event handlers
   const handleMouseEnter = useCallback(() => {
     prefetchAgent(id);
-    prefetchRoute(agentUrl);
-  }, [id, prefetchAgent, agentUrl]);
+  }, [id, prefetchAgent]);
 
   const handleDoubleClick = useCallback(() => {
     openAgentInNewWindow(id);
@@ -205,7 +202,7 @@ const AgentItem = memo<AgentItemProps>(({ item, style, className, onNavigate }) 
   });
 
   return (
-    <Link
+    <WorkspaceLink
       aria-label={displayTitle}
       ref={setAnchor}
       to={agentUrl}
@@ -227,7 +224,7 @@ const AgentItem = memo<AgentItemProps>(({ item, style, className, onNavigate }) 
         onDragEnd={handleDragEnd}
         onDragStart={handleDragStart}
       />
-    </Link>
+    </WorkspaceLink>
   );
 });
 

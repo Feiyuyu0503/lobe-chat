@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { uuid } from '@/utils/uuid';
 
 import { getTestDB } from '../../../core/getTestDB';
-import { embeddings, files, messages, sessions, users } from '../../../schemas';
+import { agents, embeddings, files, messages, sessions, topics, users } from '../../../schemas';
 import type { LobeChatDatabase } from '../../../type';
 import { MessageModel } from '../../message';
 import { codeEmbedding } from '../fixtures/embedding';
@@ -158,8 +158,8 @@ describe('MessageModel Statistics Tests', () => {
       // @ts-ignore - accessing private method for testing
       const id2 = model.genId();
 
-      expect(id1).toHaveLength(18);
-      expect(id2).toHaveLength(18);
+      expect(id1).toHaveLength(22);
+      expect(id2).toHaveLength(22);
       expect(id1).not.toBe(id2);
       expect(id1).toMatch(/^msg_/);
       expect(id2).toMatch(/^msg_/);
@@ -507,6 +507,131 @@ describe('MessageModel Statistics Tests', () => {
     });
   });
 
+  describe('getTokenHeatmaps', () => {
+    it('should sum assistant metadata.usage.totalTokens per day and scale levels', async () => {
+      vi.useFakeTimers();
+      const fixedDate = new Date('2023-04-07T13:00:00Z');
+      vi.setSystemTime(fixedDate);
+
+      const today = dayjs(fixedDate);
+      const twoDaysAgoDate = today.subtract(2, 'day').format('YYYY-MM-DD');
+      const oneDayAgoDate = today.subtract(1, 'day').format('YYYY-MM-DD');
+      const todayDate = today.format('YYYY-MM-DD');
+
+      await serverDB.insert(messages).values([
+        // two days ago: 100 + 50 = 150 tokens
+        {
+          id: 'a1',
+          userId,
+          role: 'assistant',
+          metadata: { usage: { totalTokens: 100 } },
+          createdAt: today.subtract(2, 'day').toDate(),
+        },
+        {
+          id: 'a2',
+          userId,
+          role: 'assistant',
+          metadata: { usage: { totalTokens: 50 } },
+          createdAt: today.subtract(2, 'day').toDate(),
+        },
+        // a non-assistant message with usage on the same day must be ignored
+        {
+          id: 'u1',
+          userId,
+          role: 'user',
+          metadata: { usage: { totalTokens: 9999 } },
+          createdAt: today.subtract(2, 'day').toDate(),
+        },
+        // one day ago: 300 tokens (busiest day -> level 4)
+        {
+          id: 'a3',
+          userId,
+          role: 'assistant',
+          metadata: { usage: { totalTokens: 300 } },
+          createdAt: today.subtract(1, 'day').toDate(),
+        },
+        // today: assistant message without usage -> contributes 0
+        {
+          id: 'a4',
+          userId,
+          role: 'assistant',
+          metadata: {},
+          createdAt: today.toDate(),
+        },
+        // another user's tokens must be ignored
+        {
+          id: 'o1',
+          userId: otherUserId,
+          role: 'assistant',
+          metadata: { usage: { totalTokens: 8888 } },
+          createdAt: today.subtract(1, 'day').toDate(),
+        },
+      ]);
+
+      const result = await messageModel.getTokenHeatmaps();
+
+      expect(result.length).toBeGreaterThanOrEqual(366);
+      expect(result.length).toBeLessThan(368);
+
+      const twoDaysAgo = result.find((item) => item.date === twoDaysAgoDate);
+      expect(twoDaysAgo?.count).toBe(150);
+      // 150 / 300 * 4 = 2
+      expect(twoDaysAgo?.level).toBe(2);
+
+      const oneDayAgo = result.find((item) => item.date === oneDayAgoDate);
+      expect(oneDayAgo?.count).toBe(300);
+      expect(oneDayAgo?.level).toBe(4);
+
+      const todayData = result.find((item) => item.date === todayDate);
+      expect(todayData?.count).toBe(0);
+      expect(todayData?.level).toBe(0);
+
+      vi.useRealTimers();
+    });
+
+    it('prefers the usage column and falls back to metadata.usage', async () => {
+      vi.useFakeTimers();
+      const fixedDate = new Date('2023-04-07T13:00:00Z');
+      vi.setSystemTime(fixedDate);
+
+      const today = dayjs(fixedDate);
+      const dayKey = today.subtract(2, 'day').format('YYYY-MM-DD');
+
+      await serverDB.insert(messages).values([
+        // dedicated column wins over metadata.usage → contributes 100, not 9999
+        {
+          id: 'h1',
+          userId,
+          role: 'assistant',
+          usage: { totalTokens: 100 } as any,
+          metadata: { usage: { totalTokens: 9999 } },
+          createdAt: today.subtract(2, 'day').toDate(),
+        },
+        // legacy row: only metadata.usage → falls back, contributes 50
+        {
+          id: 'h2',
+          userId,
+          role: 'assistant',
+          metadata: { usage: { totalTokens: 50 } },
+          createdAt: today.subtract(2, 'day').toDate(),
+        },
+      ]);
+
+      const result = await messageModel.getTokenHeatmaps();
+      const day = result.find((item) => item.date === dayKey);
+      expect(day?.count).toBe(150);
+
+      vi.useRealTimers();
+    });
+
+    it('should return all-zero data when there are no messages', async () => {
+      const result = await messageModel.getTokenHeatmaps();
+
+      expect(result.length).toBeGreaterThanOrEqual(366);
+      expect(result.every((item) => item.count === 0 && item.level === 0)).toBe(true);
+    });
+  });
+
   describe('rankModels', () => {
     it('should rank models by usage count', async () => {
       // Create test data
@@ -659,6 +784,73 @@ describe('MessageModel Statistics Tests', () => {
       await serverDB.insert(users).values({ id: 'empty-count-user' });
       const result = await otherModel.countUpTo(10);
       expect(result).toBe(0);
+    });
+  });
+
+  describe('hasTopicMessages', () => {
+    const agentId = 'agent-has-topic-messages';
+    const topicWithMessages = 'topic-with-messages';
+    const emptyTopic = 'topic-empty';
+
+    beforeEach(async () => {
+      await serverDB.insert(agents).values({ id: agentId, userId });
+      await serverDB.insert(topics).values([
+        { id: topicWithMessages, userId, agentId, title: 'with-messages' },
+        { id: emptyTopic, userId, agentId, title: 'empty' },
+      ]);
+      await serverDB
+        .insert(messages)
+        .values([
+          { id: 'm1', userId, role: 'assistant', content: 'hi', topicId: topicWithMessages },
+        ]);
+    });
+
+    it('returns true when topic has at least one message', async () => {
+      const result = await messageModel.hasTopicMessages(topicWithMessages);
+      expect(result).toBe(true);
+    });
+
+    it('returns false when topic has no messages', async () => {
+      const result = await messageModel.hasTopicMessages(emptyTopic);
+      expect(result).toBe(false);
+    });
+
+    it('scopes by userId — other users’ messages do not leak', async () => {
+      const otherModel = new MessageModel(serverDB, otherUserId);
+      const result = await otherModel.hasTopicMessages(topicWithMessages);
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('findFirstAssistantInTopic', () => {
+    const agentId = 'agent-find-first-assistant';
+    const topicId = 'topic-find-first-assistant';
+
+    beforeEach(async () => {
+      await serverDB.insert(agents).values({ id: agentId, userId });
+      await serverDB.insert(topics).values({ id: topicId, userId, agentId, title: 'topic' });
+    });
+
+    it('returns undefined when no assistant message exists', async () => {
+      await serverDB
+        .insert(messages)
+        .values([
+          { id: 'u1', userId, role: 'user', content: 'hi', topicId, createdAt: new Date(1) },
+        ]);
+
+      const result = await messageModel.findFirstAssistantInTopic(topicId);
+      expect(result).toBeUndefined();
+    });
+
+    it('returns the earliest assistant message in the topic', async () => {
+      await serverDB.insert(messages).values([
+        { id: 'u1', userId, role: 'user', content: 'hi', topicId, createdAt: new Date(2) },
+        { id: 'a-late', userId, role: 'assistant', content: 'b', topicId, createdAt: new Date(3) },
+        { id: 'a-early', userId, role: 'assistant', content: 'a', topicId, createdAt: new Date(1) },
+      ]);
+
+      const result = await messageModel.findFirstAssistantInTopic(topicId);
+      expect(result?.id).toBe('a-early');
     });
   });
 });

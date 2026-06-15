@@ -5,6 +5,9 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import { HeterogeneousAgentSessionErrorCode } from '@lobechat/electron-client-ipc';
+// `electron` is mocked below; this binding is the mock object so tests can
+// flip `isPackaged` to exercise the packaged-build tracing gate.
+import { app as electronAppMock } from 'electron';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import HeterogeneousAgentCtr from '../HeterogeneousAgentCtr';
@@ -23,6 +26,7 @@ const { mockGetAllWindows } = vi.hoisted(() => ({
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => mockGetAllWindows() },
   app: {
+    getAppPath: vi.fn(() => '/fake/appPath'),
     getPath: vi.fn((name: string) => (name === 'desktop' ? FAKE_DESKTOP_PATH : `/fake/${name}`)),
     isPackaged: false,
     on: vi.fn(),
@@ -309,6 +313,53 @@ describe('HeterogeneousAgentCtr', () => {
       ]);
     });
 
+    it('does not leak host Anthropic auth env into the spawned CLI', async () => {
+      // A developer with these exported in their shell would otherwise have them
+      // forwarded to `claude`, overriding its subscription login and surfacing
+      // as a baffling "Invalid API key" / non-zero exit. Regression guard for
+      // that env-leak.
+      const original = {
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+        ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
+        ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
+      };
+      process.env.ANTHROPIC_API_KEY = 'sk-host-should-not-leak';
+      process.env.ANTHROPIC_AUTH_TOKEN = 'host-token-should-not-leak';
+      process.env.ANTHROPIC_BASE_URL = 'https://host.example/should-not-leak';
+
+      try {
+        const { options } = await runSendPrompt('hello');
+
+        expect(options.env).not.toHaveProperty('ANTHROPIC_API_KEY');
+        expect(options.env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN');
+        expect(options.env).not.toHaveProperty('ANTHROPIC_BASE_URL');
+        // Unrelated inherited vars must still pass through.
+        expect(options.env.PATH).toBe(process.env.PATH);
+      } finally {
+        for (const [key, value] of Object.entries(original)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+    });
+
+    it('lets an agent-configured Anthropic key in session.env override the stripped host env', async () => {
+      const originalKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-host-should-not-leak';
+
+      try {
+        const { options } = await runSendPrompt('hello', {
+          env: { ANTHROPIC_API_KEY: 'sk-agent-explicit' },
+        });
+
+        // Explicit per-agent config wins; the host value is never seen.
+        expect(options.env.ANTHROPIC_API_KEY).toBe('sk-agent-explicit');
+      } finally {
+        if (originalKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+        else process.env.ANTHROPIC_API_KEY = originalKey;
+      }
+    });
+
     it('captures the Claude Code session id from stream-json init events', async () => {
       const { ctr, sessionId } = await runSendPrompt('hello', {}, [
         `${JSON.stringify({ session_id: 'sess_cc_123', subtype: 'init', type: 'system' })}\n`,
@@ -331,13 +382,14 @@ describe('HeterogeneousAgentCtr', () => {
       sessionOverrides: Record<string, any> = {},
       stdoutLines: string[] = [],
       sendPromptOverrides: Partial<{ imageList: Array<{ id: string; url: string }> }> = {},
+      storeGet?: (key: string, defaultValue?: any) => any,
     ) => {
       const { proc, writes } = createFakeProc({ stdoutLines });
       nextFakeProc = proc;
 
       const ctr = new HeterogeneousAgentCtr({
         appStoragePath,
-        storeManager: { get: vi.fn() },
+        storeManager: { get: storeGet ? vi.fn(storeGet) : vi.fn() },
       } as any);
       const { sessionId } = await ctr.startSession({
         agentType: 'codex',
@@ -428,6 +480,87 @@ describe('HeterogeneousAgentCtr', () => {
       expect(spawnCalls).toHaveLength(0);
     });
 
+    it('spawns through the detector-resolved absolute path when the bare command is off PATH', async () => {
+      // Codex desktop app case: `codex` is not on PATH, but the preflight
+      // detector finds the CLI bundled inside Codex.app. Spawning the bare
+      // command would ENOENT — spawn must use the resolved absolute path.
+      const resolvedPath = '/Applications/Codex.app/Contents/Resources/codex';
+      const detect = vi.fn().mockResolvedValue({ available: true, path: resolvedPath });
+      const { proc } = createFakeProc();
+      nextFakeProc = proc;
+
+      const ctr = new HeterogeneousAgentCtr({
+        appStoragePath,
+        storeManager: { get: vi.fn() },
+        toolDetectorManager: { detect },
+      } as any);
+      const { sessionId } = await ctr.startSession({
+        agentType: 'codex',
+        command: 'codex',
+      });
+      await ctr.sendPrompt({ operationId: 'op-test', prompt: 'hello', sessionId });
+
+      expect(spawnCalls[0].command).toBe(resolvedPath);
+    });
+
+    it('carries the detector login-shell PATH into the spawn env for `env node` shims', async () => {
+      // `codex` resolved via the login-shell PATH (mise/nvm). Spawning the
+      // absolute shim under the leaner inherited PATH would fail at its
+      // `#!/usr/bin/env node` shebang — the resolved PATH must reach the child.
+      const resolvedPath = '/Users/h/.local/share/mise/shims/codex';
+      const searchPath = '/Users/h/.local/share/mise/shims:/usr/bin:/bin';
+      const detect = vi
+        .fn()
+        .mockResolvedValue({ available: true, path: resolvedPath, resolvedPathEnv: searchPath });
+      const { proc } = createFakeProc();
+      nextFakeProc = proc;
+
+      const ctr = new HeterogeneousAgentCtr({
+        appStoragePath,
+        storeManager: { get: vi.fn() },
+        toolDetectorManager: { detect },
+      } as any);
+      const { sessionId } = await ctr.startSession({ agentType: 'codex', command: 'codex' });
+      await ctr.sendPrompt({ operationId: 'op-test', prompt: 'hello', sessionId });
+
+      expect(spawnCalls[0].command).toBe(resolvedPath);
+      expect(spawnCalls[0].options.env.PATH).toBe(searchPath);
+    });
+
+    it('keeps an explicit path-like command for spawn instead of the detector result', async () => {
+      // detectHeterogeneousCliCommand validates the custom path via --version.
+      execFileMock.mockImplementation(
+        (
+          _file: string,
+          _args: string[],
+          optionsOrCallback: unknown,
+          callback?: (error: Error | null, result: { stderr: string; stdout: string }) => void,
+        ) => {
+          const resolvedCallback =
+            typeof optionsOrCallback === 'function' ? optionsOrCallback : callback;
+          (resolvedCallback as any)?.(null, { stderr: '', stdout: 'codex-cli 0.99.0' });
+        },
+      );
+
+      const detect = vi.fn();
+      const { proc } = createFakeProc();
+      nextFakeProc = proc;
+
+      const ctr = new HeterogeneousAgentCtr({
+        appStoragePath,
+        storeManager: { get: vi.fn() },
+        toolDetectorManager: { detect },
+      } as any);
+      const { sessionId } = await ctr.startSession({
+        agentType: 'codex',
+        command: '/custom/bin/codex',
+      });
+      await ctr.sendPrompt({ operationId: 'op-test', prompt: 'hello', sessionId });
+
+      expect(detect).not.toHaveBeenCalled();
+      expect(spawnCalls[0].command).toBe('/custom/bin/codex');
+    });
+
     it('passes prompt via stdin to codex exec instead of argv', async () => {
       const prompt = '--run a shell-like prompt safely';
       const { cliArgs, command, writes } = await runSendPrompt(prompt);
@@ -435,8 +568,14 @@ describe('HeterogeneousAgentCtr', () => {
       expect(command).toBe('codex');
       expect(cliArgs).not.toContain(prompt);
       expect(cliArgs).toEqual(
-        expect.arrayContaining(['exec', '--json', '--skip-git-repo-check', '--full-auto']),
+        expect.arrayContaining([
+          'exec',
+          '--json',
+          '--skip-git-repo-check',
+          '--dangerously-bypass-approvals-and-sandbox',
+        ]),
       );
+      expect(cliArgs).not.toContain('--full-auto');
       expect(cliArgs).not.toContain('-');
       expect(writes).toEqual([prompt]);
     });
@@ -620,6 +759,85 @@ describe('HeterogeneousAgentCtr', () => {
       }
     });
 
+    it('centralizes to heteroAgent/tracing in dev too when the toggle is on', async () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      // Dev (isPackaged stays false), but the user opted in via the toggle.
+      process.env.NODE_ENV = 'development';
+
+      try {
+        const prompt = 'trace this opted-in dev run';
+        const rawLine = `${JSON.stringify({
+          thread_id: 'thread_codex_dev_optin',
+          type: 'thread.started',
+        })}\n`;
+        await runSendPrompt(prompt, { cwd: appStoragePath }, [rawLine], {}, (key: string) =>
+          key === 'heteroTracingEnabled' ? true : undefined,
+        );
+
+        const agentTraceRoot = path.join(appStoragePath, 'heteroAgent', 'tracing', 'codex');
+        const traceDirs = await readdir(agentTraceRoot);
+        expect(traceDirs).toHaveLength(1);
+
+        // Toggle wins over the dev cwd default.
+        await expect(readdir(path.join(appStoragePath, '.heerogeneous-tracing'))).rejects.toThrow();
+      } finally {
+        process.env.NODE_ENV = originalNodeEnv;
+      }
+    });
+
+    it('traces to the centralized heteroAgent/tracing dir in packaged builds when the toggle is on', async () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      // The gate short-circuits to `false` under NODE_ENV=test, so simulate a
+      // real packaged production process.
+      process.env.NODE_ENV = 'production';
+      (electronAppMock as any).isPackaged = true;
+
+      try {
+        const prompt = 'trace this packaged run';
+        const rawLine = `${JSON.stringify({
+          thread_id: 'thread_codex_packaged',
+          type: 'thread.started',
+        })}\n`;
+        await runSendPrompt(prompt, { cwd: appStoragePath }, [rawLine], {}, (key: string) =>
+          key === 'heteroTracingEnabled' ? true : undefined,
+        );
+
+        // Centralized under appStoragePath/heteroAgent/tracing — NOT in the cwd.
+        const traceRoot = path.join(appStoragePath, 'heteroAgent', 'tracing');
+        const agentTraceRoot = path.join(traceRoot, 'codex');
+        const traceDirs = await readdir(agentTraceRoot);
+        expect(traceDirs).toHaveLength(1);
+
+        const traceDir = path.join(agentTraceRoot, traceDirs[0]);
+        await expect(readFile(path.join(traceDir, 'stdout.jsonl'), 'utf8')).resolves.toBe(rawLine);
+
+        // The dev-style cwd location must NOT be written in packaged mode.
+        await expect(readdir(path.join(appStoragePath, '.heerogeneous-tracing'))).rejects.toThrow();
+      } finally {
+        process.env.NODE_ENV = originalNodeEnv;
+        (electronAppMock as any).isPackaged = false;
+      }
+    });
+
+    it('does not trace in packaged builds when the toggle is off', async () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      (electronAppMock as any).isPackaged = true;
+
+      try {
+        await runSendPrompt('no trace please', { cwd: appStoragePath }, [], {}, (key: string) =>
+          key === 'heteroTracingEnabled' ? false : undefined,
+        );
+
+        await expect(
+          readdir(path.join(appStoragePath, 'heteroAgent', 'tracing')),
+        ).rejects.toThrow();
+      } finally {
+        process.env.NODE_ENV = originalNodeEnv;
+        (electronAppMock as any).isPackaged = false;
+      }
+    });
+
     it('skips trace creation (and never auto-creates the cwd) when the cwd is missing', async () => {
       const originalNodeEnv = process.env.NODE_ENV;
       process.env.NODE_ENV = 'development';
@@ -717,7 +935,7 @@ describe('HeterogeneousAgentCtr', () => {
    * `stdout.on('end')` handler can schedule `pipeline.flush()` onto the
    * broadcast queue), then drain the queue, then broadcast complete.
    */
-  describe('exit-before-end ordering (LOBE-8516 phase 0 race)', () => {
+  describe('exit-before-end ordering (phase 0 race)', () => {
     let broadcasts: Array<{ channel: string; data: any }>;
 
     beforeEach(() => {
@@ -808,7 +1026,7 @@ describe('HeterogeneousAgentCtr', () => {
     });
   });
 
-  describe('app-quit cleanup of AskUserQuestion temp configs (LOBE-8725)', () => {
+  describe('app-quit cleanup of AskUserQuestion temp configs ()', () => {
     // The async exit-handler cleanup races Electron's main-process teardown
     // and used to leak `lobe-cc-mcp-<opId>.json` files in `os.tmpdir()` on
     // every quit. The controller now unlinks pending intervention temp

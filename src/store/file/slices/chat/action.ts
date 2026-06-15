@@ -1,5 +1,6 @@
 import { type ChatContextContent } from '@lobechat/types';
 import { COMPRESSIBLE_IMAGE_TYPES, compressImageFile } from '@lobechat/utils/compressImage';
+import { toast } from '@lobehub/ui/base-ui';
 import { Buffer } from 'buffer.js';
 import { t } from 'i18next';
 
@@ -18,12 +19,44 @@ import { sleep } from '@/utils/sleep';
 import { setNamespace } from '@/utils/storeDebug';
 
 import { type FileStore } from '../../store';
+import { filterSupportedChatUploadFiles } from './uploadGuard';
 
 const n = setNamespace('chat');
 
 type Setter = StoreSetter<FileStore>;
 export const createFileSlice = (set: Setter, get: () => FileStore, _api?: unknown) =>
   new FileActionImpl(set, get, _api);
+
+const getTrpcErrorCode = (error: unknown): string | undefined => {
+  if (typeof error !== 'object' || error === null || !('data' in error)) return;
+
+  const data = (error as { data?: { code?: unknown } }).data;
+  return typeof data?.code === 'string' ? data.code : undefined;
+};
+
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string') return message;
+  }
+
+  return String(error);
+};
+
+const getUploadErrorDescription = (error: unknown): string => {
+  if (error === UPLOAD_NETWORK_ERROR) return t('upload.networkError', { ns: 'error' });
+
+  if (getTrpcErrorCode(error) === 'FORBIDDEN') {
+    return t('upload.permissionDenied', { ns: 'error' });
+  }
+
+  return typeof error === 'string'
+    ? error
+    : t('upload.unknownError', { ns: 'error', reason: getErrorMessage(error) });
+};
 
 export class FileActionImpl {
   readonly #get: () => FileStore;
@@ -111,9 +144,22 @@ export class FileActionImpl {
     const { dispatchChatUploadFileList } = this.#get();
     // 0. skip file in blacklist
     const filteredFiles = rawFiles.filter((file) => !FILE_UPLOAD_BLACKLIST.includes(file.name));
+    const { supportedFiles, unsupportedFiles } = filterSupportedChatUploadFiles(filteredFiles);
+
+    if (unsupportedFiles.length > 0) {
+      toast.error(
+        t('upload.validation.unsupportedFileType', {
+          files: unsupportedFiles.map((file) => file.name).join(', '),
+          ns: 'chat',
+        }),
+      );
+    }
+
+    if (supportedFiles.length === 0) return;
+
     // 1. compress images and add files with base64
     const files = await Promise.all(
-      filteredFiles.map((file) =>
+      supportedFiles.map((file) =>
         COMPRESSIBLE_IMAGE_TYPES.has(file.type) ? compressImageFile(file) : file,
       ),
     );
@@ -150,16 +196,9 @@ export class FileActionImpl {
         });
       } catch (error) {
         // skip `UNAUTHORIZED` error
-        if ((error as any)?.message !== 'UNAUTHORIZED')
+        if (getErrorMessage(error) !== 'UNAUTHORIZED')
           notification.error({
-            description:
-              // it may be a network error or the cors error
-              error === UPLOAD_NETWORK_ERROR
-                ? t('upload.networkError', { ns: 'error' })
-                : // or the error from the server
-                  typeof error === 'string'
-                  ? error
-                  : t('upload.unknownError', { ns: 'error', reason: (error as Error).message }),
+            description: getUploadErrorDescription(error),
             message: t('upload.uploadFailed', { ns: 'error' }),
           });
 

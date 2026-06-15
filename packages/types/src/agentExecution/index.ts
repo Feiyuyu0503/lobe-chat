@@ -1,10 +1,64 @@
 import type { TaskDetail, UIChatMessage } from '../message';
 import type { ChatTopic } from '../topic';
 
+export type AgentSignalOperationKind =
+  | 'memory'
+  | 'nightly-review'
+  | 'self-feedback-intent'
+  | 'self-reflection'
+  | 'skill';
+
+/**
+ * Run-scoped Agent Signal marker stamped onto a background agent operation at
+ * dispatch. It travels on `appContext.agentSignal`, lands in
+ * `state.metadata.agentSignal`, and is read back on the completion path to
+ * project receipts / briefs (the `agent.execution.completed` payload itself only
+ * carries `agentId/operationId/topicId`). Runtime parsing/validation helpers live
+ * server-side in `operationMarker.ts`.
+ */
+export interface AgentSignalOperationMarker {
+  /**
+   * The reviewed user agent a resulting receipt should be attributed to. Needed
+   * when the run executes under a builtin self-iteration slug (whose resolved
+   * operation agentId is the builtin agent, not the user's agent); the
+   * completion projector prefers this over the run's agentId.
+   */
+  agentId?: string;
+  /** Assistant message a resulting receipt should anchor to. */
+  anchorMessageId?: string;
+  /** Discriminator the completion handler dispatches on. */
+  kind: AgentSignalOperationKind;
+  /** Local review date (YYYY-MM-DD) for nightly review brief/receipt writes. */
+  localDate?: string;
+  /** Review window end (ISO) — lets tools re-derive the evidence digest. */
+  reviewWindowEnd?: string;
+  /** Review window start (ISO). */
+  reviewWindowStart?: string;
+  /** Stable producer source id of the originating signal. */
+  sourceId?: string;
+  /** Topic the run is scoped to. */
+  topicId?: string;
+  /** User message that initiated the originating feedback. */
+  triggerMessageId?: string;
+}
+
 /**
  * Application context for message storage
  */
 export interface ExecAgentAppContext {
+  /**
+   * Agent document row id (`agent_documents.id`) for the document the user is
+   * currently viewing. When supplied, the active document context is built
+   * directly without a `listDocumentsForTopic` reverse lookup, so docs opened
+   * outside the active topic (skills, web docs) still carry `agent_document_id`
+   * for downstream tool calls.
+   */
+  agentDocumentId?: string | null;
+  /**
+   * Run-scoped Agent Signal marker for background self-iteration / memory runs.
+   * Forwarded into the operation so the completion path can project receipts.
+   */
+  agentSignal?: AgentSignalOperationMarker;
   /** Optional default assignee candidate for task manager prompts */
   defaultTaskAssigneeAgentId?: string;
   /** Current document ID for page-scoped conversations */
@@ -19,10 +73,23 @@ export interface ExecAgentAppContext {
     repos?: string[];
     workingDirectory?: string;
   };
+  /**
+   * Whether this operation is an isolated sub-agent execution. Used to disable
+   * recursive sub-agent dispatch.
+   */
+  isSubAgent?: boolean;
   /** Scope identifier */
   scope?: string | null;
   /** Session ID */
   sessionId?: string;
+  /** Optional assistant message id that anchors the run (e.g. parent for an isolated thread). */
+  sourceMessageId?: string;
+  /**
+   * Suppresses AgentSignal `agent.user.message` re-emission when this run is itself driven by a
+   * background/builtin agent. Required for self-iteration / memory-writer / skill-manager runs to
+   * avoid recursion into the analyzeIntent pipeline.
+   */
+  suppressSignal?: boolean;
   /** Current task identifier when executing from a task detail surface */
   taskId?: string | null;
   /** Thread ID for threaded conversations */
@@ -42,13 +109,6 @@ export interface ExecAgentParams {
   appContext?: ExecAgentAppContext;
   /** Whether to auto-start execution after creating operation (default: true) */
   autoStart?: boolean;
-  /**
-   * Runtime of the client initiating this request. Used by the server to
-   * enable `executor: 'client'` tools (e.g. local-system) when the caller
-   * is a desktop Electron client that will receive `tool_execute` events
-   * over the same Agent Gateway WebSocket.
-   */
-  clientRuntime?: 'desktop' | 'web';
   /** Explicit device ID to bind to the topic and activate for this run */
   deviceId?: string;
   /** Optional existing message IDs to include in context */
@@ -190,59 +250,87 @@ export interface ExecGroupAgentResponse {
   userMessageId: string;
 }
 
-// ============ SubAgent Task Execution Types ============
+// ============ SubAgent Execution Types ============
 
 /**
- * Parameters for execSubAgentTask - execute SubAgent task
+ * Parameters for execSubAgent - execute an agent in an isolated thread
  * Supports both Group mode and Single Agent mode
  *
  * - Group mode: pass groupId, Thread will be associated with the Group
  * - Single Agent mode: omit groupId, Thread will only be associated with the Agent
  */
-export interface ExecSubAgentTaskParams {
-  /** The SubAgent ID to execute the task */
+export interface ExecSubAgentParams {
+  /** The agent ID to execute */
   agentId: string;
   /** The Group ID (optional, only for Group mode) */
   groupId?: string;
-  /** Task instruction/prompt for the SubAgent */
+  /** Instruction/prompt for the agent */
   instruction: string;
-  /** The parent message ID (Supervisor's tool call message or task message) */
+  /** The parent message ID that anchors the isolated thread */
   parentMessageId: string;
   /** Parent operation ID for dispatching callAgent hooks */
   parentOperationId?: string;
   /** Timeout in milliseconds (optional) */
   timeout?: number;
-  /** Task title (shown in UI, used as thread title) */
+  /** Thread title shown in UI */
   title?: string;
   /** The Topic ID */
   topicId: string;
 }
 
 /**
- * Result from execSubAgentTask
+ * Parameters for execVirtualSubAgent - execute a `lobe-agent.callSubAgent`
+ * child run.
+ *
+ * Virtual sub-agents are tool-created isolated runs. They are marked with
+ * `appContext.isSubAgent` so the child cannot recursively spawn more
+ * sub-agents, and they install the completion bridge that backfills the
+ * parent's placeholder tool message before resuming the parent operation.
  */
-export interface ExecSubAgentTaskResult {
-  /** The assistant message ID created for this task */
+export interface ExecVirtualSubAgentParams {
+  /** The agent ID to execute */
+  agentId: string;
+  /** The Group ID inherited from the parent operation, when present */
+  groupId?: string;
+  /** Instruction/prompt for the virtual sub-agent */
+  instruction: string;
+  /** The parent placeholder tool message ID */
+  parentMessageId: string;
+  /** Parent operation ID to bridge and resume on completion */
+  parentOperationId: string;
+  /** Timeout in milliseconds (optional) */
+  timeout?: number;
+  /** Thread title shown in UI */
+  title?: string;
+  /** The Topic ID */
+  topicId: string;
+}
+
+/**
+ * Result from execSubAgent
+ */
+export interface ExecSubAgentResult {
+  /** The assistant message ID created for this run */
   assistantMessageId: string;
-  /** Error message if task failed to start */
+  /** Error message if execution failed to start */
   error?: string;
   /** Operation ID for tracking execution status */
   operationId: string;
-  /** Whether the task was created successfully */
+  /** Whether the execution was created successfully */
   success: boolean;
-  /** The Thread ID where the task is executed */
+  /** The Thread ID where the execution is isolated */
   threadId: string;
 }
 
 /**
- * @deprecated Use ExecSubAgentTaskParams instead
+ * @deprecated Use ExecSubAgentParams instead
  */
-export type ExecGroupSubAgentTaskParams = ExecSubAgentTaskParams;
+export type ExecGroupSubAgentTaskParams = ExecSubAgentParams;
 
 /**
- * @deprecated Use ExecSubAgentTaskResult instead
+ * @deprecated Use ExecSubAgentResult instead
  */
-export type ExecGroupSubAgentTaskResult = ExecSubAgentTaskResult;
+export type ExecGroupSubAgentTaskResult = ExecSubAgentResult;
 
 /**
  * Current activity for real-time progress display

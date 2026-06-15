@@ -3,6 +3,32 @@
   "cloud": [],
   "community": [
     {
+      "image": "/blog/assets65dddd1748c3de8646c8ad56abf53390.webp",
+      "id": "2026-06-08-connectors",
+      "date": "2026-06-08",
+      "versionRange": [
+        "2.2.2"
+      ]
+    },
+    {
+      "image": "/blog/assets10cadd434aeb36bd1beb3c7b3d371fbd.webp",
+      "id": "2026-05-31-drag-and-drop-skills",
+      "date": "2026-05-31",
+      "versionRange": [
+        "2.2.0",
+        "2.2.1"
+      ]
+    },
+    {
+      "image": "https://hub-apac-1.lobeobjects.space/billboard/covers/1778838542538-MDEMAEav.png",
+      "id": "2026-05-19-chief-agent-operator",
+      "date": "2026-05-19",
+      "versionRange": [
+        "2.1.58",
+        "2.2.0"
+      ]
+    },
+    {
       "image": "/blog/assets4aa1732a45832afc780600e6e329860c.webp",
       "id": "2026-05-11-agent-tasks-ga",
       "date": "2026-05-11",

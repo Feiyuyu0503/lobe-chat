@@ -1,12 +1,15 @@
-import { Button, Center, Flexbox, Icon } from '@lobehub/ui';
+import { Button, Center, Flexbox, Icon, Tooltip } from '@lobehub/ui';
+import { App } from 'antd';
 import { createStaticStyles } from 'antd-style';
 import { BrainIcon, LucideRefreshCcwDot, PlusIcon } from 'lucide-react';
-import { memo, useState } from 'react';
+import { memo, use, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { usePermission } from '@/hooks/usePermission';
 import { useAiInfraStore } from '@/store/aiInfra';
 
-import CreateNewModelModal from './CreateNewModelModal';
+import { createCreateNewModelModal } from './CreateNewModelModal';
+import { ProviderSettingsContext } from './ProviderSettingsContext';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
   circle: css`
@@ -46,11 +49,13 @@ const styles = createStaticStyles(({ css, cssVar }) => ({
 
 const EmptyState = memo<{ provider: string }>(({ provider }) => {
   const { t } = useTranslation('modelProvider');
+  const { message } = App.useApp();
+  const { allowed: canManageProvider, reason } = usePermission('manage_provider_key');
 
   const [fetchRemoteModelList] = useAiInfraStore((s) => [s.fetchRemoteModelList]);
 
   const [fetchRemoteModelsLoading, setFetchRemoteModelsLoading] = useState(false);
-  const [showModal, setShowModal] = useState(false);
+  const { showDeployName } = use(ProviderSettingsContext);
 
   return (
     <Center className={styles.container} gap={24} paddingBlock={40}>
@@ -63,33 +68,52 @@ const EmptyState = memo<{ provider: string }>(({ provider }) => {
       </Flexbox>
 
       <Flexbox horizontal gap={8}>
-        <Button
-          icon={PlusIcon}
-          onClick={() => {
-            setShowModal(true);
-          }}
-        >
-          {t('providerModels.list.addNew')}
-        </Button>
-        <CreateNewModelModal open={showModal} setOpen={setShowModal} />
-        <Button
-          icon={<Icon icon={LucideRefreshCcwDot} />}
-          loading={fetchRemoteModelsLoading}
-          type={'primary'}
-          onClick={async () => {
-            setFetchRemoteModelsLoading(true);
-            try {
-              await fetchRemoteModelList(provider);
-            } catch (e) {
-              console.error(e);
-            }
-            setFetchRemoteModelsLoading(false);
-          }}
-        >
-          {fetchRemoteModelsLoading
-            ? t('providerModels.list.fetcher.fetching')
-            : t('providerModels.list.fetcher.fetch')}
-        </Button>
+        <Tooltip title={canManageProvider ? '' : reason}>
+          <Button
+            disabled={!canManageProvider}
+            icon={PlusIcon}
+            onClick={() => {
+              if (!canManageProvider) return;
+              createCreateNewModelModal({ showDeployName });
+            }}
+          >
+            {t('providerModels.list.addNew')}
+          </Button>
+        </Tooltip>
+        <Tooltip title={canManageProvider ? '' : reason}>
+          <Button
+            disabled={!canManageProvider}
+            icon={<Icon icon={LucideRefreshCcwDot} />}
+            loading={fetchRemoteModelsLoading}
+            type={'primary'}
+            onClick={async () => {
+              if (!canManageProvider) return;
+              setFetchRemoteModelsLoading(true);
+              try {
+                await fetchRemoteModelList(provider);
+              } catch (error) {
+                console.error(error);
+
+                const errorMessage =
+                  error instanceof Error
+                    ? error.message
+                    : t('providerModels.list.fetcher.errorFallback');
+
+                message.error(
+                  t('providerModels.list.fetcher.error', {
+                    message: errorMessage,
+                  }),
+                );
+              } finally {
+                setFetchRemoteModelsLoading(false);
+              }
+            }}
+          >
+            {fetchRemoteModelsLoading
+              ? t('providerModels.list.fetcher.fetching')
+              : t('providerModels.list.fetcher.fetch')}
+          </Button>
+        </Tooltip>
       </Flexbox>
     </Center>
   );

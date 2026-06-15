@@ -1,6 +1,5 @@
 'use client';
 
-import { BRANDING_NAME } from '@lobechat/business-const';
 import { Flexbox } from '@lobehub/ui';
 import { createStaticStyles, useTheme } from 'antd-style';
 import { memo, useCallback, useEffect, useMemo } from 'react';
@@ -8,6 +7,7 @@ import { useSearchParams } from 'react-router-dom';
 
 import DragUploadZone from '@/components/DragUploadZone';
 import { PageEditor } from '@/features/PageEditor';
+import { usePermission } from '@/hooks/usePermission';
 import dynamic from '@/libs/next/dynamic';
 import { useCurrentFolderId } from '@/routes/(main)/resource/features/hooks/useCurrentFolderId';
 import { useResourceManagerStore } from '@/routes/(main)/resource/features/store';
@@ -73,10 +73,14 @@ const ResourceManager = memo(() => {
   const currentDocument = useFileStore(documentSelectors.getDocumentById(currentViewItemId));
   const pushDockFileList = useFileStore((s) => s.pushDockFileList);
   const updateDocumentOptimistically = useFileStore((s) => s.updateDocumentOptimistically);
+  const { allowed: canUpload } = usePermission('create_content');
 
   const handleUploadFiles = useCallback(
-    (files: File[]) => pushDockFileList(files, libraryId, currentFolderId ?? undefined),
-    [currentFolderId, libraryId, pushDockFileList],
+    (files: File[]) => {
+      if (!canUpload) return;
+      pushDockFileList(files, libraryId, currentFolderId ?? undefined);
+    },
+    [canUpload, currentFolderId, libraryId, pushDockFileList],
   );
 
   const cssVariables = useMemo<Record<string, string>>(
@@ -109,8 +113,6 @@ const ResourceManager = memo(() => {
       prev.delete('file');
       return prev;
     });
-    // Reset document title to default
-    document.title = BRANDING_NAME;
   };
 
   // Optimistic update handlers for page title and emoji
@@ -136,7 +138,11 @@ const ResourceManager = memo(() => {
 
   return (
     <>
-      <DragUploadZone enabledFiles style={{ height: '100%' }} onUploadFiles={handleUploadFiles}>
+      <DragUploadZone
+        enabledFiles={canUpload}
+        style={{ height: '100%' }}
+        onUploadFiles={handleUploadFiles}
+      >
         <Flexbox className={styles.container} height={'100%'} style={cssVariables}>
           {/* Explorer is always rendered to preserve its state */}
           <Explorer />

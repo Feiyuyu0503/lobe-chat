@@ -32,6 +32,10 @@ export class TopicService {
     return lambdaClient.topic.cloneTopic.mutate({ id, newTitle });
   };
 
+  batchMoveTopics = (topicIds: string[], targetAgentId: string) => {
+    return lambdaClient.topic.batchMoveTopics.mutate({ targetAgentId, topicIds });
+  };
+
   importTopic = (params: {
     agentId: string;
     data: string;
@@ -50,7 +54,9 @@ export class TopicService {
       includeTriggers: params.includeTriggers,
       isInbox: params.isInbox,
       pageSize: params.pageSize,
+      sortBy: params.sortBy,
       triggers: params.triggers,
+      withDetails: params.withDetails,
     }) as any;
   };
 
@@ -70,6 +76,10 @@ export class TopicService {
 
   rankTopics = async (limit?: number): Promise<TopicRankItem[]> => {
     return lambdaClient.topic.rankTopics.query(limit);
+  };
+
+  getMaxTaskDuration = async (): Promise<number> => {
+    return lambdaClient.topic.getMaxTaskDuration.query();
   };
 
   getRecentTopics = async (limit?: number): Promise<RecentTopic[]> => {

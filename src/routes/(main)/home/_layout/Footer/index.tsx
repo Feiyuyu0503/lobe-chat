@@ -20,23 +20,23 @@ import {
 import type { ReactNode } from 'react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
-import ChangelogModal from '@/components/ChangelogModal';
+import { openChangelogModal } from '@/components/ChangelogModal';
+import { openFeedbackModal } from '@/components/FeedbackModal';
 import HighlightNotification from '@/components/HighlightNotification';
 import { DOCUMENTS_REFER_URL, GITHUB } from '@/const/url';
 import Billboard from '@/features/Billboard';
 import { useBillboardMenuItems } from '@/features/Billboard/MenuItems';
 import { useActiveNavKey } from '@/features/NavPanel';
 import ThemeButton from '@/features/User/UserPanel/ThemeButton';
-import { useFeedbackModal } from '@/hooks/useFeedbackModal';
+import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
 import { useNavLayout } from '@/hooks/useNavLayout';
 import { useGlobalStore } from '@/store/global';
 import { systemStatusSelectors } from '@/store/global/selectors/systemStatus';
 import { useServerConfigStore } from '@/store/serverConfig';
 import { useUserStore } from '@/store/user';
 import { userGeneralSettingsSelectors } from '@/store/user/slices/settings/selectors/general';
-import { prefetchRoute } from '@/utils/router';
 
 import { resolveFooterPromotionState } from './promotionPipeline';
 
@@ -80,9 +80,7 @@ const Footer = memo(() => {
       !!s.onboarding?.finishedAt,
       userGeneralSettingsSelectors.config(s).isDevMode,
     ]);
-  const [shouldLoadChangelog, setShouldLoadChangelog] = useState(false);
   const [isAgentOnboardingCardOpen, setIsAgentOnboardingCardOpen] = useState(false);
-  const [isChangelogModalOpen, setIsChangelogModalOpen] = useState(false);
   const [isProductHuntCardOpen, setIsProductHuntCardOpen] = useState(false);
 
   const [isAgentOnboardingPromoRead, isProductHuntNotificationRead, updateSystemStatus] =
@@ -170,20 +168,13 @@ const Footer = memo(() => {
     });
   }, [isWithinTimeWindow, shouldAutoShowProductHuntCard, trackPromotionEvent]);
 
-  const { open: openFeedbackModal } = useFeedbackModal();
-
-  const handleOpenChangelogModal = () => {
-    setShouldLoadChangelog(true);
-    setIsChangelogModalOpen(true);
-  };
-
-  const handleCloseChangelogModal = () => {
-    setIsChangelogModalOpen(false);
-  };
+  const handleOpenChangelogModal = useCallback(() => {
+    openChangelogModal();
+  }, []);
 
   const handleOpenFeedbackModal = useCallback(() => {
     openFeedbackModal();
-  }, [openFeedbackModal]);
+  }, []);
 
   const handleCloseAgentOnboardingCard = useCallback(() => {
     setIsAgentOnboardingCardOpen(false);
@@ -266,7 +257,7 @@ const Footer = memo(() => {
             {
               icon: <Icon icon={Settings2} />,
               key: 'setting',
-              label: <Link to="/settings">{t('userPanel.setting')}</Link>,
+              label: <WorkspaceLink to="/settings">{t('userPanel.setting')}</WorkspaceLink>,
             },
             {
               type: 'divider' as const,
@@ -324,7 +315,7 @@ const Footer = memo(() => {
             {
               icon: <Icon icon={FlaskConical} />,
               key: 'eval',
-              label: <Link to="/eval">Evaluation Lab</Link>,
+              label: <WorkspaceLink to="/eval">Evaluation Lab</WorkspaceLink>,
             },
           ]
         : []),
@@ -347,6 +338,7 @@ const Footer = memo(() => {
       footer.layout,
       footer.hideGitHub,
       footer.showEvalEntry,
+      handleOpenChangelogModal,
       handleOpenFeedbackModal,
       handleOpenProductHuntCard,
       isDevMode,
@@ -375,9 +367,9 @@ const Footer = memo(() => {
                 <ActionIcon icon={GithubIcon} size={16} title={'GitHub'} />
               </a>
             )}
-            <Link to="/eval">
+            <WorkspaceLink to="/eval">
               <ActionIcon icon={FlaskConical} size={16} title="Evaluation Lab" />
-            </Link>
+            </WorkspaceLink>
           </Flexbox>
           <ThemeButton placement={'topCenter'} size={16} />
         </Flexbox>
@@ -387,22 +379,17 @@ const Footer = memo(() => {
             <ActionIcon aria-label={t('userPanel.help')} icon={CircleHelp} size={16} />
           </DropdownMenu>
           {isDevMode && (
-            <Link to="/settings" onMouseEnter={() => prefetchRoute('/settings')}>
+            <WorkspaceLink to="/settings">
               <ActionIcon
                 aria-label={t('userPanel.setting')}
                 icon={SettingsIcon}
                 size={16}
                 title={t('userPanel.setting')}
               />
-            </Link>
+            </WorkspaceLink>
           )}
         </Flexbox>
       )}
-      <ChangelogModal
-        open={isChangelogModalOpen}
-        shouldLoad={shouldLoadChangelog}
-        onClose={handleCloseChangelogModal}
-      />
       {activePromotion && (
         <HighlightNotification
           open

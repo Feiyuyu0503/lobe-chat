@@ -18,6 +18,7 @@ export enum PortalViewType {
   Notebook = 'notebook',
   Thread = 'thread',
   ToolUI = 'toolUI',
+  VerifyResult = 'verifyResult',
 }
 
 export interface PortalFile {
@@ -26,28 +27,53 @@ export interface PortalFile {
   fileId: string;
 }
 
+export interface OpenLocalFileParams {
+  deviceId?: string;
+  filePath: string;
+  workingDirectory: string;
+}
+
+export interface OpenLocalFileEntry extends OpenLocalFileParams {
+  id: string;
+}
+
 export type PortalViewData =
   | { type: PortalViewType.Home }
   | { artifact: PortalArtifact; type: PortalViewType.Artifact }
-  | { documentId: string; type: PortalViewType.Document }
+  | { agentDocumentId?: string; documentId: string; type: PortalViewType.Document }
   | { type: PortalViewType.Notebook }
   | { file: PortalFile; type: PortalViewType.FilePreview }
   | { type: PortalViewType.LocalFile }
   | { messageId: string; type: PortalViewType.MessageDetail }
-  | { identifier: string; messageId: string; type: PortalViewType.ToolUI }
+  | {
+      identifier: string;
+      messageId: string;
+      params?: Record<string, any>;
+      type: PortalViewType.ToolUI;
+    }
   | { startMessageId?: string; threadId?: string; type: PortalViewType.Thread }
-  | { agentId: string; type: PortalViewType.GroupThread };
+  | { agentId: string; type: PortalViewType.GroupThread }
+  | { checkItemId: string; operationId: string; type: PortalViewType.VerifyResult };
 
 // ============== Portal State ==============
 
 export interface ChatPortalState {
-  /** Path of the currently active tab; undefined when no tabs open. */
+  /** Composite id of the currently active local-file tab; undefined when no tabs open. */
+  activeLocalFileId?: string;
+
+  /** Active local-file tab id keyed by project/root working directory. */
+  activeLocalFileIdsByScope: Record<string, string>;
+
+  /** Path of the currently active tab; kept for legacy consumers that only need display/open path. */
   activeLocalFilePath?: string;
+
+  /** Unsaved edit buffers keyed by file path. Presence implies the file is dirty. */
+  dirtyLocalFileContents: Record<string, string>;
 
   // Legacy fields (kept for backward compatibility during migration)
   // TODO: Remove after Phase 3 migration complete
   /** Open file tabs in the LocalFile portal. */
-  openLocalFiles: Array<{ filePath: string; workingDirectory: string }>;
+  openLocalFiles: OpenLocalFileEntry[];
   /** @deprecated Use portalStack instead */
   portalArtifact?: PortalArtifact;
   portalArtifactDisplayMode: ArtifactDisplayMode;
@@ -69,6 +95,8 @@ export interface ChatPortalState {
 }
 
 export const initialChatPortalState: ChatPortalState = {
+  activeLocalFileIdsByScope: {},
+  dirtyLocalFileContents: {},
   openLocalFiles: [],
   portalArtifactDisplayMode: ArtifactDisplayMode.Preview,
   portalStack: [],

@@ -9,7 +9,8 @@ import {
   Modal,
   stopPropagation,
 } from '@lobehub/ui';
-import { App, Button } from 'antd';
+import { confirmModal } from '@lobehub/ui/base-ui';
+import { Button } from 'antd';
 import isEqual from 'fast-deep-equal';
 import { MoreVerticalIcon, Plus, Trash2 } from 'lucide-react';
 import React, { memo, Suspense, useState } from 'react';
@@ -20,6 +21,7 @@ import PluginAvatar from '@/components/Plugins/PluginAvatar';
 import McpDetail from '@/features/MCP/MCPDetail';
 import McpDetailLoading from '@/features/MCP/MCPDetail/Loading';
 import MCPInstallProgress from '@/features/MCP/MCPInstallProgress';
+import { usePermission } from '@/hooks/usePermission';
 import { useMarketAuth } from '@/layout/AuthProvider/MarketAuth';
 import { useAgentStore } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
@@ -32,8 +34,9 @@ import { itemStyles } from '../style';
 const Item = memo<DiscoverMcpItem>(({ name, description, icon, identifier }) => {
   const styles = itemStyles;
   const { t } = useTranslation('plugin');
-  const { modal } = App.useApp();
   const [detailOpen, setDetailOpen] = useState(false);
+  const { allowed: canCreate } = usePermission('create_content');
+  const { allowed: canEdit } = usePermission('edit_own_content');
 
   const [installed, installing, installMCPPlugin, cancelInstallMCPPlugin, unInstallPlugin, plugin] =
     useToolStore((s) => [
@@ -59,9 +62,10 @@ const Item = memo<DiscoverMcpItem>(({ name, description, icon, identifier }) => 
   const isCloudMcp = !!((plugin as any)?.cloudEndPoint || (plugin as any)?.haveCloudEndpoint);
 
   const handleInstall = async () => {
+    if (!canCreate || !canEdit) return;
     if (isCloudMcp && !isAuthenticated) {
       try {
-        await signIn();
+        await signIn('mcp');
       } catch {
         return;
       }
@@ -87,12 +91,13 @@ const Item = memo<DiscoverMcpItem>(({ name, description, icon, identifier }) => 
           items={[
             {
               danger: true,
+              disabled: !canEdit,
               icon: <Icon icon={Trash2} />,
               key: 'uninstall',
               label: t('store.actions.uninstall'),
               onClick: () => {
-                modal.confirm({
-                  centered: true,
+                if (!canEdit) return;
+                confirmModal({
                   okButtonProps: { danger: true },
                   onOk: async () => {
                     if (isPluginEnabledInAgent) {
@@ -101,7 +106,6 @@ const Item = memo<DiscoverMcpItem>(({ name, description, icon, identifier }) => 
                     await unInstallPlugin(identifier);
                   },
                   title: t('store.actions.confirmUninstall'),
-                  type: 'error',
                 });
               },
             },
@@ -120,7 +124,14 @@ const Item = memo<DiscoverMcpItem>(({ name, description, icon, identifier }) => 
       );
     }
 
-    return <ActionIcon icon={Plus} title={t('store.actions.install')} onClick={handleInstall} />;
+    return (
+      <ActionIcon
+        disabled={!canCreate || !canEdit}
+        icon={Plus}
+        title={t('store.actions.install')}
+        onClick={handleInstall}
+      />
+    );
   };
 
   return (

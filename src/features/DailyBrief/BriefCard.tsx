@@ -5,9 +5,10 @@ import { cssVar } from 'antd-style';
 import { Check, ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
 
 import { DEFAULT_INBOX_AVATAR } from '@/const/meta';
+import { taskDetailPath } from '@/features/AgentTasks/shared/taskDetailPath';
+import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import Time from '@/routes/(main)/home/features/components/Time';
 
 import BriefCardActions from './BriefCardActions';
@@ -47,13 +48,17 @@ interface BriefCardProps {
 
 const BriefCard = memo<BriefCardProps>(
   ({ brief, enableNavigation = true, onAfterResolve, onAfterAddComment }) => {
-    const navigate = useNavigate();
+    const navigate = useWorkspaceAwareNavigate();
     const { t } = useTranslation('home');
     const isResolved = Boolean(brief.resolvedAction);
     const [expanded, setExpanded] = useState(false);
     const showFull = !isResolved || expanded;
 
     const canNavigate = enableNavigation && Boolean(brief.taskId);
+    const handleNavigate = () => {
+      if (!brief.taskId) return;
+      navigate(taskDetailPath(brief.taskId, brief.agentId ?? undefined));
+    };
 
     return (
       <Block
@@ -69,7 +74,7 @@ const BriefCard = memo<BriefCardProps>(
           className={canNavigate ? styles.clickableHeader : undefined}
           gap={16}
           justify={'space-between'}
-          onClick={canNavigate ? () => navigate(`/task/${brief.taskId}`) : undefined}
+          onClick={canNavigate ? handleNavigate : undefined}
         >
           <Flexbox horizontal align={'center'} flex={1} gap={8} style={{ overflow: 'hidden' }}>
             <BriefIcon muted={isResolved} type={brief.type} />

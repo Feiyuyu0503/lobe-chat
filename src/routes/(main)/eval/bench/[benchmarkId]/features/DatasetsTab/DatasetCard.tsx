@@ -1,12 +1,13 @@
 import { Button, Flexbox, Tag } from '@lobehub/ui';
+import { confirmModal } from '@lobehub/ui/base-ui';
 import { App, Card, Dropdown } from 'antd';
 import { createStaticStyles } from 'antd-style';
 import { ArrowRight, ChevronRight, Database, Ellipsis, Pencil, Play, Trash2 } from 'lucide-react';
 import { memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
 
 import NeuralNetworkLoading from '@/components/NeuralNetworkLoading';
+import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
 import { agentEvalService } from '@/services/agentEval';
 
 import { DATASET_PRESETS } from '../../../../config/datasetPresets';
@@ -135,10 +136,10 @@ const DatasetCard = memo<DatasetCardProps>(
     onRun,
   }) => {
     const { t } = useTranslation('eval');
-    const { modal, message } = App.useApp();
+    const { message } = App.useApp();
 
     const handleDelete = useCallback(() => {
-      modal.confirm({
+      confirmModal({
         content: t('dataset.delete.confirm'),
         okButtonProps: { danger: true },
         okText: t('common.delete'),
@@ -153,7 +154,7 @@ const DatasetCard = memo<DatasetCardProps>(
         },
         title: t('common.delete'),
       });
-    }, [dataset.id, message, modal, onRefresh, t]);
+    }, [dataset.id, message, onRefresh, t]);
 
     return (
       <Card className={styles.card}>
@@ -250,14 +251,14 @@ const DatasetCard = memo<DatasetCardProps>(
               />
             )}
             <Flexbox horizontal align="center" className={styles.footer} justify="center">
-              <Link
+              <WorkspaceLink
                 className={styles.footerLink}
                 to={`/eval/bench/${benchmarkId}/datasets/${dataset.id}`}
               >
                 <Button icon={ArrowRight} iconPosition="end" size="small" variant="text">
                   {t('dataset.detail.viewDetail')}
                 </Button>
-              </Link>
+              </WorkspaceLink>
             </Flexbox>
           </div>
         )}

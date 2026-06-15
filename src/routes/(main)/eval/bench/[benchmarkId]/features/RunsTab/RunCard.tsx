@@ -1,5 +1,6 @@
 import type { AgentEvalRunListItem } from '@lobechat/types';
 import { Flexbox, Icon } from '@lobehub/ui';
+import { confirmModal } from '@lobehub/ui/base-ui';
 import { App, Card, Dropdown, Progress } from 'antd';
 import { createStaticStyles } from 'antd-style';
 import {
@@ -15,8 +16,8 @@ import {
 } from 'lucide-react';
 import { Fragment, memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
 
+import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
 import { useEvalStore } from '@/store/eval';
 
 import StatusBadge from '../../../../features/StatusBadge';
@@ -122,7 +123,7 @@ interface RunCardProps {
 
 const RunCard = memo<RunCardProps>(({ benchmarkId, run, onRefresh, onEdit }) => {
   const { t } = useTranslation('eval');
-  const { modal, message } = App.useApp();
+  const { message } = App.useApp();
   const deleteRun = useEvalStore((s) => s.deleteRun);
   const startRun = useEvalStore((s) => s.startRun);
   const abortRun = useEvalStore((s) => s.abortRun);
@@ -148,7 +149,7 @@ const RunCard = memo<RunCardProps>(({ benchmarkId, run, onRefresh, onEdit }) => 
   const handleStart = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    modal.confirm({
+    confirmModal({
       content: t('run.actions.start.confirm'),
       okText: t('run.actions.start'),
       onOk: async () => {
@@ -166,7 +167,7 @@ const RunCard = memo<RunCardProps>(({ benchmarkId, run, onRefresh, onEdit }) => 
   const handleAbort = (e?: React.MouseEvent) => {
     e?.preventDefault();
     e?.stopPropagation();
-    modal.confirm({
+    confirmModal({
       content: t('run.actions.abort.confirm'),
       okText: t('run.actions.abort'),
       okButtonProps: { danger: true },
@@ -181,7 +182,7 @@ const RunCard = memo<RunCardProps>(({ benchmarkId, run, onRefresh, onEdit }) => 
   const handleDelete = (e?: React.MouseEvent) => {
     e?.preventDefault();
     e?.stopPropagation();
-    modal.confirm({
+    confirmModal({
       content: t('run.actions.delete.confirm'),
       okButtonProps: { danger: true },
       okText: t('run.actions.delete'),
@@ -239,7 +240,7 @@ const RunCard = memo<RunCardProps>(({ benchmarkId, run, onRefresh, onEdit }) => 
   ];
 
   return (
-    <Link className={styles.cardLink} to={`/eval/bench/${benchmarkId}/runs/${run.id}`}>
+    <WorkspaceLink className={styles.cardLink} to={`/eval/bench/${benchmarkId}/runs/${run.id}`}>
       <Card className={styles.card}>
         <Flexbox horizontal align="center" gap={16}>
           {/* Left: Info */}
@@ -333,7 +334,7 @@ const RunCard = memo<RunCardProps>(({ benchmarkId, run, onRefresh, onEdit }) => 
           <Icon className={styles.arrowIcon} icon={ArrowRight} size={16} />
         </Flexbox>
       </Card>
-    </Link>
+    </WorkspaceLink>
   );
 });
 

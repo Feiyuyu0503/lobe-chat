@@ -2034,6 +2034,68 @@ describe('LobeOpenAICompatibleFactory', () => {
       expect(result).toEqual({ age: 30, name: 'John' });
     });
 
+    it('should map disabled thinking to no reasoning effort for GPT-5.4 Responses generateObject', async () => {
+      const mockResponse = {
+        output_text: '{"name": "John", "age": 30}',
+      };
+
+      vi.spyOn(instance['client'].responses, 'create').mockResolvedValue(mockResponse as any);
+
+      const payload = {
+        messages: [{ content: 'Generate a person object', role: 'user' as const }],
+        model: 'gpt-5.4-mini',
+        schema: {
+          name: 'person_extractor',
+          schema: {
+            properties: { age: { type: 'number' }, name: { type: 'string' } },
+            type: 'object' as const,
+          },
+        },
+        thinking: { budget_tokens: 0, type: 'disabled' as const },
+      };
+
+      await instance.generateObject(payload);
+
+      expect(instance['client'].responses.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'gpt-5.4-mini',
+          reasoning: { effort: 'none' },
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('should normalize GPT-5 Pro-family Responses generateObject reasoning effort to high', async () => {
+      const mockResponse = {
+        output_text: '{"name": "John", "age": 30}',
+      };
+
+      vi.spyOn(instance['client'].responses, 'create').mockResolvedValue(mockResponse as any);
+
+      const payload = {
+        messages: [{ content: 'Generate a person object', role: 'user' as const }],
+        model: 'gpt-5.4-pro',
+        reasoning_effort: 'medium' as const,
+        schema: {
+          name: 'person_extractor',
+          schema: {
+            properties: { age: { type: 'number' }, name: { type: 'string' } },
+            type: 'object' as const,
+          },
+        },
+      };
+
+      await instance.generateObject(payload);
+
+      expect(instance['client'].responses.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'gpt-5.4-pro',
+          reasoning: { effort: 'high' },
+        }),
+        expect.anything(),
+      );
+    });
+
     it('should handle options correctly', async () => {
       const mockResponse = {
         output_text: '{"status": "success"}',
@@ -3111,9 +3173,59 @@ describe('LobeOpenAICompatibleFactory', () => {
           { headers: undefined, signal: undefined },
         );
 
-        expect(result).toEqual([
-          { arguments: { age: 28, name: 'Alice' }, name: 'person_extractor' },
-        ]);
+        // The fallback returns the parsed schema object, same shape as the
+        // json_schema path
+        expect(result).toEqual({ age: 28, name: 'Alice' });
+      });
+
+      it('should not forward internal thinking to generic OpenAI-compatible generateObject requests', async () => {
+        const mockResponse = {
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    function: {
+                      arguments: '{"name":"Alice","age":28}',
+                      name: 'person_extractor',
+                    },
+                    type: 'function' as const,
+                  },
+                ],
+              },
+            },
+          ],
+        };
+
+        vi.spyOn(instanceWithToolCalling['client'].chat.completions, 'create').mockResolvedValue(
+          mockResponse as any,
+        );
+
+        const payload = {
+          messages: [{ content: 'Extract person info', role: 'user' as const }],
+          model: 'deepseek-v4-pro',
+          reasoning_effort: 'high' as const,
+          schema: {
+            name: 'person_extractor',
+            schema: {
+              properties: { age: { type: 'number' }, name: { type: 'string' } },
+              type: 'object' as const,
+            },
+          },
+          thinking: { budget_tokens: 0, type: 'disabled' as const },
+        };
+
+        await instanceWithToolCalling.generateObject(payload);
+
+        const requestPayload =
+          instanceWithToolCalling['client'].chat.completions.create.mock.calls[0]![0];
+        expect(requestPayload).toEqual(
+          expect.objectContaining({
+            model: 'deepseek-v4-pro',
+          }),
+        );
+        expect(requestPayload).not.toHaveProperty('thinking');
+        expect(requestPayload).not.toHaveProperty('reasoning_effort');
       });
 
       it('should return undefined when no tool call found', async () => {
@@ -3143,7 +3255,10 @@ describe('LobeOpenAICompatibleFactory', () => {
 
         const result = await instanceWithToolCalling.generateObject(payload);
 
-        expect(consoleSpy).toHaveBeenCalledWith('parse tool call arguments error:', undefined);
+        expect(consoleSpy).toHaveBeenCalledWith(
+          'no tool call found in structured output response:',
+          mockResponse.choices[0].message,
+        );
         expect(result).toBeUndefined();
 
         consoleSpy.mockRestore();
@@ -3186,7 +3301,7 @@ describe('LobeOpenAICompatibleFactory', () => {
 
         expect(consoleSpy).toHaveBeenCalledWith(
           'parse tool call arguments error:',
-          mockResponse.choices[0].message.tool_calls,
+          mockResponse.choices[0].message.tool_calls[0],
         );
         expect(result).toBeUndefined();
 
@@ -3238,7 +3353,7 @@ describe('LobeOpenAICompatibleFactory', () => {
           { headers: options.headers, signal: options.signal },
         );
 
-        expect(result).toEqual([{ arguments: { data: 'test' }, name: 'data_extractor' }]);
+        expect(result).toEqual({ data: 'test' });
       });
     });
   });
@@ -3270,7 +3385,10 @@ describe('LobeOpenAICompatibleFactory', () => {
             'ChatGPT-4o is a dynamic model that updates in real time to stay current. It combines strong language understanding and generation, suitable for large-scale applications such as customer support, education, and technical support.',
           displayName: 'GPT-4o',
           enabled: true,
+          family: 'gpt',
+          generation: 'gpt-4o',
           id: 'gpt-4o',
+          knowledgeCutoff: '2023-10',
           maxOutput: 4096,
           pricing: {
             units: [
@@ -3311,7 +3429,10 @@ describe('LobeOpenAICompatibleFactory', () => {
             "Claude 3.7 Sonnet is Anthropic's fastest next-gen model. Compared to Claude 3 Haiku, it improves across skills and surpasses the previous flagship Claude 3 Opus on many intelligence benchmarks.",
           displayName: 'Claude 3.7 Sonnet',
           enabled: false,
+          family: 'claude-sonnet',
+          generation: 'claude-3.7',
           id: 'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+          knowledgeCutoff: '2024-10',
           maxOutput: 64_000,
           pricing: {
             units: [
@@ -3350,7 +3471,10 @@ describe('LobeOpenAICompatibleFactory', () => {
             'GPT-4o Mini is a small, efficient model with performance similar to GPT-4o.',
           displayName: 'GPT 4o Mini',
           enabled: false,
+          family: 'gpt',
+          generation: 'gpt-4o',
           id: 'gpt-4o-mini',
+          knowledgeCutoff: '2023-10',
           maxOutput: 4096,
           pricing: {
             units: [

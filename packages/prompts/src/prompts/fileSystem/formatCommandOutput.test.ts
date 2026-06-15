@@ -3,30 +3,46 @@ import { describe, expect, it } from 'vitest';
 import { formatCommandOutput } from './formatCommandOutput';
 
 describe('formatCommandOutput', () => {
-  it('should format successful output while running', () => {
+  it('should format successful output without exit code', () => {
     const result = formatCommandOutput({
-      running: true,
       success: true,
     });
-    expect(result).toMatchInlineSnapshot(`"Output retrieved. Running: true"`);
+    expect(result).toMatchInlineSnapshot(`"Output retrieved."`);
   });
 
-  it('should format successful output when not running', () => {
+  it('should suppress zero exit code when present', () => {
     const result = formatCommandOutput({
-      running: false,
+      exitCode: 0,
       success: true,
     });
-    expect(result).toMatchInlineSnapshot(`"Output retrieved. Running: false"`);
+    expect(result).toMatchInlineSnapshot(`"Output retrieved."`);
   });
 
-  it('should format successful output with content', () => {
+  it('should format duration in seconds when present', () => {
     const result = formatCommandOutput({
-      output: 'Process output here',
-      running: true,
+      durationMs: 45_400,
       success: true,
     });
     expect(result).toMatchInlineSnapshot(`
-      "Output retrieved. Running: true
+      "Output retrieved.
+
+      Duration: 45s"
+    `);
+  });
+
+  it('should format completed output with non-zero exit code', () => {
+    const result = formatCommandOutput({
+      durationMs: 123_000,
+      exitCode: 17,
+      output: 'Process output here',
+      success: true,
+    });
+    expect(result).toMatchInlineSnapshot(`
+      "Output retrieved.
+
+      Exit code: 17
+
+      Duration: 123s
 
       Output:
       Process output here"
@@ -36,7 +52,6 @@ describe('formatCommandOutput', () => {
   it('should format failed output', () => {
     const result = formatCommandOutput({
       error: 'Process not found',
-      running: false,
       success: false,
     });
     expect(result).toMatchInlineSnapshot(`"Failed: Process not found"`);
@@ -45,12 +60,14 @@ describe('formatCommandOutput', () => {
   it('should format successful output with error info', () => {
     const result = formatCommandOutput({
       error: 'Warning message',
+      exitCode: 1,
       output: 'Some output',
-      running: false,
       success: true,
     });
     expect(result).toMatchInlineSnapshot(`
-      "Output retrieved. Running: false
+      "Output retrieved.
+
+      Exit code: 1
 
       Output:
       Some output

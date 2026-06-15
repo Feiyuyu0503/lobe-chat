@@ -1,14 +1,18 @@
 import { BUILTIN_AGENT_SLUGS } from '@lobechat/builtin-agents';
+import { CUSTOM_DOCUMENT_FILE_TYPE } from '@lobechat/const';
 
+import { stableWorkspaceAwareNavigate } from '@/features/Workspace/stableWorkspaceAwareNavigate';
 import { chatGroupService } from '@/services/chatGroup';
 import { documentService } from '@/services/document';
 import { getAgentStoreState } from '@/store/agent';
 import { agentSelectors, builtinAgentSelectors } from '@/store/agent/selectors';
 import { getChatGroupStoreState } from '@/store/agentGroup';
 import { useChatStore } from '@/store/chat';
+import { useGlobalStore } from '@/store/global';
+import { useGroupProfileStore } from '@/store/groupProfile';
 import { type HomeStore } from '@/store/home/store';
 import { type StoreSetter } from '@/store/types';
-import { getStableNavigate } from '@/utils/stableNavigate';
+import { markdownToTxt } from '@/utils/markdownToTxt';
 import { setNamespace } from '@/utils/storeDebug';
 
 import { type StarterMode } from './initialState';
@@ -81,13 +85,17 @@ export class HomeInputActionImpl {
           model,
           provider,
           systemRole: message,
-          title: message?.slice(0, 50) || 'New Agent',
+          title: markdownToTxt(message ?? '').slice(0, 50) || 'New Agent',
         },
         groupId,
       });
 
+      if (message.trim()) {
+        useGlobalStore.getState().toggleAgentBuilderPanel(true);
+      }
+
       // 3. Navigate to Agent profile page
-      getStableNavigate()?.(`/agent/${result.agentId}/profile`);
+      stableWorkspaceAwareNavigate(`/agent/${result.agentId}/profile`);
 
       // 4. Refresh agent list
       this.#get().refreshAgentList();
@@ -147,7 +155,7 @@ export class HomeInputActionImpl {
           systemPrompt: message,
         },
         groupId,
-        title: message?.slice(0, 50) || 'New Group',
+        title: markdownToTxt(message ?? '').slice(0, 50) || 'New Group',
       });
 
       // 3. Load groups and refresh
@@ -157,8 +165,12 @@ export class HomeInputActionImpl {
       // 4. Refresh sidebar agent list
       this.#get().refreshAgentList();
 
+      if (message.trim()) {
+        useGroupProfileStore.getState().setChatPanelExpanded(true);
+      }
+
       // 5. Navigate to Group profile page
-      getStableNavigate()?.(`/group/${group.id}/profile`);
+      stableWorkspaceAwareNavigate(`/group/${group.id}/profile`);
 
       // 6. Update groupAgentBuilder's model config and send initial message.
       // Hydrate first so we don't race with the group profile page's own init.
@@ -214,12 +226,12 @@ export class HomeInputActionImpl {
       // 2. Create new Document
       const newDoc = await documentService.createDocument({
         editorData: '{}',
-        fileType: 'custom/document',
-        title: message?.slice(0, 50) || 'Untitled',
+        fileType: CUSTOM_DOCUMENT_FILE_TYPE,
+        title: markdownToTxt(message ?? '').slice(0, 50) || 'Untitled',
       });
 
       // 3. Navigate to Page
-      getStableNavigate()?.(`/page/${newDoc.id}`);
+      stableWorkspaceAwareNavigate(`/page/${newDoc.id}`);
 
       // 4. Update pageAgent's model config and send initial message. Hydrate
       // first to avoid the same race the agent/group flows hit.
@@ -233,7 +245,11 @@ export class HomeInputActionImpl {
 
         const { sendMessage } = useChatStore.getState();
         await sendMessage({
-          context: { agentId: pageAgentId, scope: 'page' },
+          // Pass the freshly created document id explicitly. The new PageEditor
+          // has not mounted yet, so the page editor runtime singleton may still
+          // be bound to the previously open document — relying on its fallback
+          // here would scope server-side PageAgent tools to the wrong document.
+          context: { agentId: pageAgentId, documentId: newDoc.id, scope: 'page' },
           editorData,
           message,
         });

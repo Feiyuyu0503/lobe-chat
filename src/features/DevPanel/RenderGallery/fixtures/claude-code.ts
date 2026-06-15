@@ -4,6 +4,22 @@ import { ClaudeCodeIdentifier } from '@lobechat/builtin-tool-claude-code/client'
 
 import { defineFixtures, single, variants } from './_helpers';
 
+const linearIssueApiName = 'mcp__claude_ai_Linear__save_issue';
+const linearIssueResult = {
+  description:
+    '## 背景\n\n当前客户端侧有三种 agent runtime 路径，它们都在处理同一类 agent run 生命周期，但生命周期控制点不一致。\n\n## 目标\n\n建立一套共享的 post-complete hooks，让 queue message、topic title、Agent Signal、unread completion 和 notification 都通过同一入口收敛。',
+  id: 'LOBE-10205',
+  links: [
+    {
+      title: 'PR #15766: refactor(chat): unify agent run lifecycle',
+      url: 'https://github.com/lobehub/lobehub/pull/15766',
+    },
+  ],
+  state: { name: 'In Review' },
+  title: '统一三种客户端 Agent Runtime 的 run 生命周期 hooks',
+  url: 'https://linear.app/lobehub/issue/LOBE-10205',
+};
+
 export default defineFixtures({
   identifier: ClaudeCodeIdentifier,
   meta: {
@@ -76,8 +92,20 @@ export default defineFixtures({
       name: 'ToolSearch',
     },
     {
+      description: 'Fetch a URL and answer a prompt about it.',
+      name: 'WebFetch',
+    },
+    {
+      description: 'Search the web.',
+      name: 'WebSearch',
+    },
+    {
       description: 'Write a new file.',
       name: 'Write',
+    },
+    {
+      description: 'Update a Linear issue through MCP.',
+      name: linearIssueApiName,
     },
   ],
   fixtures: {
@@ -366,11 +394,35 @@ export default defineFixtures({
       args: { max_results: 5, query: 'select:Read,Edit,Grep' },
       content: 'Loaded 3 deferred tool schemas: Read, Edit, Grep.',
     }),
+    WebFetch: single({
+      args: {
+        prompt: 'Summarize the key changes in the latest release.',
+        url: 'https://github.com/lobehub/lobe-chat/releases/latest',
+      },
+      content:
+        '## LobeChat v1.0\n\n- New agent runtime with tool streaming\n- Faster cold start\n- Fixed a memory leak in the chat store',
+    }),
+    WebSearch: single({
+      args: {
+        allowed_domains: ['developer.mozilla.org'],
+        query: 'CSS container queries browser support',
+      },
+      content:
+        '1. Container queries — MDN — developer.mozilla.org/en-US/docs/Web/CSS/CSS_containment\n2. Can I use: CSS Container Queries — caniuse.com/css-container-queries',
+    }),
     Write: single({
       args: {
         content: "export const previewEnabled = process.env.NODE_ENV === 'development';\n",
         file_path: 'src/routes/(main)/devtools/featureFlag.ts',
       },
+    }),
+    [linearIssueApiName]: single({
+      args: {
+        id: 'LOBE-10205',
+        links: linearIssueResult.links,
+        state: 'In Review',
+      },
+      content: JSON.stringify(linearIssueResult),
     }),
   },
 });

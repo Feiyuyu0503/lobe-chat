@@ -1,12 +1,13 @@
 import { ProviderIcon } from '@lobehub/icons';
 import { type FormItemProps } from '@lobehub/ui';
 import { Button, Flexbox, FormModal, Icon, Input, Select, TextArea } from '@lobehub/ui';
+import { confirmModal } from '@lobehub/ui/base-ui';
 import { App } from 'antd';
 import { BrainIcon } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
 
+import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { useAiInfraStore } from '@/store/aiInfra/store';
 import { type AiProviderDetailItem, type UpdateAiProviderParams } from '@/types/aiProvider';
 
@@ -28,8 +29,8 @@ const CreateNewProvider = memo<CreateNewProviderProps>(({ onClose, open, initial
     s.deleteAiProvider,
   ]);
 
-  const { message, modal } = App.useApp();
-  const navigate = useNavigate();
+  const { message } = App.useApp();
+  const navigate = useWorkspaceAwareNavigate();
 
   const onFinish = async (values: UpdateAiProviderParams) => {
     setLoading(true);
@@ -140,7 +141,7 @@ const CreateNewProvider = memo<CreateNewProviderProps>(({ onClose, open, initial
             disabled={loading}
             type={'primary'}
             onClick={() => {
-              modal.confirm({
+              confirmModal({
                 okButtonProps: {
                   danger: true,
                 },

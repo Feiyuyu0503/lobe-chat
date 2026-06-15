@@ -6,18 +6,17 @@ import { ChevronRight } from 'lucide-react';
 import path from 'path-browserify-esm';
 import { memo } from 'react';
 
+import { InlineHtmlPreview, isHtmlFile } from '@/components/HtmlPreview';
 import { LocalFile, LocalFolder } from '@/features/LocalFile';
 
 const styles = createStaticStyles(({ css, cssVar }) => ({
   container: css`
-    padding: 8px;
-    border-radius: ${cssVar.borderRadiusLG};
-    background: ${cssVar.colorFillQuaternary};
+    padding-block: 4px;
   `,
   previewBox: css`
     overflow: hidden;
     border-radius: 8px;
-    background: ${cssVar.colorBgContainer};
+    background: ${cssVar.colorFillTertiary};
   `,
 }));
 
@@ -38,12 +37,13 @@ const WriteFile = memo<BuiltinRenderProps<WriteLocalFileParams>>(({ args }) => {
 
   const { base, dir } = path.parse(args.path);
   const ext = path.extname(args.path).slice(1).toLowerCase();
+  const isHtml = isHtmlFile({ path: args.path });
   const isMarkdown = ext === 'md' || ext === 'mdx';
 
   // Code-type files render as a "new file" unified diff so the visual is
   // consistent with EditLocalFile's PatchDiff. Markdown keeps its rendered
   // preview because a rendered doc reads better than an all-green diff.
-  if (!isMarkdown && args.content) {
+  if (!isMarkdown && !isHtml && args.content) {
     return (
       <PatchDiff
         fileName={base}
@@ -65,10 +65,17 @@ const WriteFile = memo<BuiltinRenderProps<WriteLocalFileParams>>(({ args }) => {
       </Flexbox>
 
       {args.content && (
-        <Flexbox className={styles.previewBox}>
-          <Markdown style={{ maxHeight: 240, overflow: 'auto', padding: '0 8px' }} variant={'chat'}>
-            {args.content}
-          </Markdown>
+        <Flexbox className={styles.previewBox} style={{ height: isHtml ? 260 : undefined }}>
+          {isHtml ? (
+            <InlineHtmlPreview content={args.content} />
+          ) : (
+            <Markdown
+              style={{ maxHeight: 240, overflow: 'auto', padding: '0 8px' }}
+              variant={'chat'}
+            >
+              {args.content}
+            </Markdown>
+          )}
         </Flexbox>
       )}
     </Flexbox>

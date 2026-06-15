@@ -1,14 +1,37 @@
+import { toast } from '@lobehub/ui/base-ui';
 import { act, renderHook } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { notification } from '@/components/AntdStaticMethods';
 
 import { useFileStore as useStore } from '../../store';
 
 vi.mock('zustand/traditional');
 
+vi.mock('@lobehub/ui/base-ui', () => ({
+  toast: {
+    error: vi.fn(),
+  },
+}));
+
 // Mock necessary modules and functions
 vi.mock('@/components/AntdStaticMethods', () => ({
   notification: {
     error: vi.fn(),
+  },
+}));
+
+vi.mock('i18next', () => ({
+  t: (key: string, options?: { reason?: string }) => {
+    if (key === 'upload.permissionDenied') {
+      return 'You do not have permission to upload files in this workspace.';
+    }
+
+    if (key === 'upload.uploadFailed') return 'File upload failed.';
+
+    if (key === 'upload.unknownError') return `Error reason: ${options?.reason}`;
+
+    return key;
   },
 }));
 
@@ -46,5 +69,47 @@ describe('useFileStore:chat', () => {
     });
 
     expect(result.current.chatUploadFileList).toEqual([]);
+  });
+
+  it('uploadChatFiles should reject unsupported files before upload', async () => {
+    const { result } = renderHook(() => useStore());
+    const uploadWithProgress = vi.fn();
+
+    act(() => {
+      useStore.setState({
+        chatUploadFileList: [],
+        uploadWithProgress: uploadWithProgress as any,
+      });
+    });
+
+    await act(async () => {
+      await result.current.uploadChatFiles([
+        new File(['<svg />'], 'icon.svg', { type: 'image/svg+xml' }),
+        new File(['zip'], 'archive.zip', { type: 'application/zip' }),
+      ]);
+    });
+
+    expect(uploadWithProgress).not.toHaveBeenCalled();
+    expect(result.current.chatUploadFileList).toEqual([]);
+    expect(toast.error).toHaveBeenCalledWith(expect.any(String));
+  });
+
+  it('shows a permission denied description when upload is rejected by RBAC', async () => {
+    const { result } = renderHook(() => useStore());
+    const file = new File(['test'], 'test.txt', { type: 'text/plain' });
+
+    vi.spyOn(result.current, 'uploadWithProgress').mockRejectedValue({
+      data: { code: 'FORBIDDEN' },
+      message: 'Missing any of: file:upload:all, file:upload:owner',
+    });
+
+    await act(async () => {
+      await result.current.uploadChatFiles([file]);
+    });
+
+    expect(notification.error).toHaveBeenCalledWith({
+      description: 'You do not have permission to upload files in this workspace.',
+      message: 'File upload failed.',
+    });
   });
 });

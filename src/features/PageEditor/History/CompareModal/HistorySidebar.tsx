@@ -1,11 +1,12 @@
 'use client';
 
 import { Flexbox, Tag, Text } from '@lobehub/ui';
-import { createStyles, cssVar, cx } from 'antd-style';
+import { createStaticStyles, cssVar, cx } from 'antd-style';
 import dayjs from 'dayjs';
 import { memo, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useAuthorInfo } from '@/business/client/hooks/useAuthorInfo';
 import type {
   DocumentHistoryListItem,
   DocumentHistorySaveSource,
@@ -13,7 +14,7 @@ import type {
 
 import { formatHistoryRowTime } from '../formatHistoryDate';
 
-const useStyles = createStyles(({ css, token }) => ({
+const styles = createStaticStyles(({ css }) => ({
   container: css`
     overflow-y: auto;
     flex-shrink: 0;
@@ -21,9 +22,9 @@ const useStyles = createStyles(({ css, token }) => ({
     width: 232px;
     padding-block: 4px 12px;
     padding-inline: 8px;
-    border-inline-start: 1px solid ${token.colorBorderSecondary};
+    border-inline-start: 1px solid ${cssVar.colorBorderSecondary};
 
-    background: ${token.colorBgContainer};
+    background: ${cssVar.colorBgContainer};
   `,
   dot: css`
     position: absolute;
@@ -32,19 +33,19 @@ const useStyles = createStyles(({ css, token }) => ({
 
     width: 8px;
     height: 8px;
-    border: 1px solid ${token.colorBorder};
+    border: 1px solid ${cssVar.colorBorder};
     border-radius: 999px;
 
-    background: ${token.colorBgContainer};
-    box-shadow: 0 0 0 2px ${token.colorBgContainer};
+    background: ${cssVar.colorBgContainer};
+    box-shadow: 0 0 0 2px ${cssVar.colorBgContainer};
   `,
   dotCurrent: css`
-    border-color: ${token.colorSuccess};
-    background: ${token.colorSuccess};
+    border-color: ${cssVar.colorSuccess};
+    background: ${cssVar.colorSuccess};
   `,
   dotSelected: css`
-    border-color: ${token.colorPrimary};
-    background: ${token.colorPrimary};
+    border-color: ${cssVar.colorPrimary};
+    background: ${cssVar.colorPrimary};
   `,
   group: css`
     position: relative;
@@ -61,7 +62,7 @@ const useStyles = createStyles(({ css, token }) => ({
     font-weight: 500;
     line-height: 1.2;
 
-    background: ${token.colorBgContainer};
+    background: ${cssVar.colorBgContainer};
   `,
   item: css`
     cursor: pointer;
@@ -73,18 +74,30 @@ const useStyles = createStyles(({ css, token }) => ({
     transition: background ${cssVar.motionDurationMid} ${cssVar.motionEaseInOut};
 
     &:hover {
-      background: ${token.colorFillQuaternary};
+      background: ${cssVar.colorFillQuaternary};
     }
   `,
   itemCurrent: css`
     cursor: default;
   `,
   itemSelected: css`
-    background: ${token.colorFillSecondary};
+    background: ${cssVar.colorFillSecondary};
 
     &:hover {
-      background: ${token.colorFillSecondary};
+      background: ${cssVar.colorFillSecondary};
     }
+  `,
+  source: css`
+    overflow: hidden;
+
+    margin-inline-start: auto;
+    padding-inline-start: 8px;
+
+    font-size: 11px;
+    line-height: 1.3;
+    color: ${cssVar.colorTextTertiary};
+    text-overflow: ellipsis;
+    white-space: nowrap;
   `,
   meta: css`
     overflow: hidden;
@@ -101,7 +114,7 @@ const useStyles = createStyles(({ css, token }) => ({
 
     width: 1px;
 
-    background: ${token.colorFillTertiary};
+    background: ${cssVar.colorFillTertiary};
   `,
   row: css`
     position: relative;
@@ -150,6 +163,62 @@ const createGroups = (
   return [...groups.values()];
 };
 
+interface HistorySidebarRowProps {
+  isSelected: boolean;
+  item: DocumentHistoryListItem;
+  onSelect: (historyId: string) => void;
+  saveSourceLabels: Record<DocumentHistorySaveSource, string>;
+}
+
+const HistorySidebarRow = memo<HistorySidebarRowProps>(
+  ({ item, isSelected, onSelect, saveSourceLabels }) => {
+    const { t } = useTranslation('file');
+    const authorInfo = useAuthorInfo(item.userId);
+    const disabled = item.isCurrent;
+
+    return (
+      <div className={styles.row}>
+        <div
+          className={cx(
+            styles.dot,
+            item.isCurrent && styles.dotCurrent,
+            !item.isCurrent && isSelected && styles.dotSelected,
+          )}
+        />
+        <div
+          className={cx(
+            styles.item,
+            item.isCurrent && styles.itemCurrent,
+            !item.isCurrent && isSelected && styles.itemSelected,
+          )}
+          onClick={() => {
+            if (disabled) return;
+            onSelect(item.id);
+          }}
+        >
+          <Flexbox gap={2}>
+            <Flexbox horizontal align={'center'} gap={4}>
+              <Text className={styles.time}>{formatHistoryRowTime(item.savedAt)}</Text>
+              {item.isCurrent && (
+                <Tag className={styles.tag} variant={'borderless'}>
+                  {t('pageEditor.history.current')}
+                </Tag>
+              )}
+              <span className={styles.source}>{saveSourceLabels[item.saveSource]}</span>
+            </Flexbox>
+            <Text className={styles.meta} type={'secondary'}>
+              {authorInfo?.fullName ? `${authorInfo.fullName} · ` : ''}
+              {dayjs(item.savedAt).fromNow()}
+            </Text>
+          </Flexbox>
+        </div>
+      </div>
+    );
+  },
+);
+
+HistorySidebarRow.displayName = 'HistorySidebarRow';
+
 interface HistorySidebarProps {
   items: DocumentHistoryListItem[];
   onSelect: (historyId: string) => void;
@@ -160,7 +229,6 @@ interface HistorySidebarProps {
 const HistorySidebar = memo<HistorySidebarProps>(
   ({ items, onSelect, saveSourceLabels, selectedHistoryId }) => {
     const { t } = useTranslation('file');
-    const { styles } = useStyles();
 
     const formatLabel = useCallback(
       (savedAt: string) => {
@@ -183,47 +251,15 @@ const HistorySidebar = memo<HistorySidebarProps>(
             </div>
             <div className={styles.group}>
               <div className={styles.rail} />
-              {group.items.map((item) => {
-                const isSelected = selectedHistoryId === item.id;
-                const disabled = item.isCurrent;
-
-                return (
-                  <div className={styles.row} key={item.id}>
-                    <div
-                      className={cx(
-                        styles.dot,
-                        item.isCurrent && styles.dotCurrent,
-                        !item.isCurrent && isSelected && styles.dotSelected,
-                      )}
-                    />
-                    <div
-                      className={cx(
-                        styles.item,
-                        item.isCurrent && styles.itemCurrent,
-                        !item.isCurrent && isSelected && styles.itemSelected,
-                      )}
-                      onClick={() => {
-                        if (disabled) return;
-                        onSelect(item.id);
-                      }}
-                    >
-                      <Flexbox gap={2}>
-                        <Flexbox horizontal align={'center'} gap={4}>
-                          <Text className={styles.time}>{formatHistoryRowTime(item.savedAt)}</Text>
-                          {item.isCurrent && (
-                            <Tag className={styles.tag} variant={'borderless'}>
-                              {t('pageEditor.history.current')}
-                            </Tag>
-                          )}
-                        </Flexbox>
-                        <Text className={styles.meta} type={'secondary'}>
-                          {dayjs(item.savedAt).fromNow()} · {saveSourceLabels[item.saveSource]}
-                        </Text>
-                      </Flexbox>
-                    </div>
-                  </div>
-                );
-              })}
+              {group.items.map((item) => (
+                <HistorySidebarRow
+                  isSelected={selectedHistoryId === item.id}
+                  item={item}
+                  key={item.id}
+                  saveSourceLabels={saveSourceLabels}
+                  onSelect={onSelect}
+                />
+              ))}
             </div>
           </Flexbox>
         ))}

@@ -43,6 +43,10 @@ export const UserLabSchema = z.object({
    */
   enableAgentSelfIteration: z.boolean().optional(),
   /**
+   * enable the floating chat panel in agent document preview
+   */
+  enableAgentDocumentFloatingChatPanel: z.boolean().optional(),
+  /**
    * enable server-side agent execution via Gateway WebSocket
    */
   enableGatewayMode: z.boolean().optional(),
@@ -51,9 +55,17 @@ export const UserLabSchema = z.object({
    */
   enableGroupChat: z.boolean().optional(),
   /**
+   * enable the iMessage channel (BlueBubbles Desktop bridge)
+   */
+  enableImessage: z.boolean().optional(),
+  /**
    * enable markdown rendering in chat input editor
    */
   enableInputMarkdown: z.boolean().optional(),
+  /**
+   * show the "Add Platform Agent" entry in the create menu
+   */
+  enablePlatformAgent: z.boolean().optional(),
 });
 
 export type UserLab = z.infer<typeof UserLabSchema>;
@@ -144,7 +156,7 @@ export const UserPreferenceSchema = z
     hideSyncAlert: z.boolean().optional(),
     lab: UserLabSchema.optional(),
     telemetry: z.boolean().nullable(),
-    topicGroupMode: z.enum(['byTime', 'byProject', 'flat']).optional(),
+    topicGroupMode: z.enum(['byTime', 'byProject', 'flat', 'byStatus']).optional(),
     topicIncludeCompleted: z.boolean().optional(),
     topicSortBy: z.enum(['createdAt', 'updatedAt']).optional(),
     useCmdEnterToSend: z.boolean().optional(),

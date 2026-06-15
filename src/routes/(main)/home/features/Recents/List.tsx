@@ -2,10 +2,11 @@ import { Flexbox } from '@lobehub/ui';
 import { MoreHorizontalIcon } from 'lucide-react';
 import { memo, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
 
+import { taskDetailPath } from '@/features/AgentTasks/shared/taskDetailPath';
 import NavItem from '@/features/NavPanel/components/NavItem';
 import SkeletonList from '@/features/NavPanel/components/SkeletonList';
+import WorkspaceLink from '@/features/Workspace/WorkspaceLink';
 import { useGlobalStore } from '@/store/global';
 import { systemStatusSelectors } from '@/store/global/selectors';
 import { useHomeStore } from '@/store/home';
@@ -33,7 +34,7 @@ const RecentsList = memo(() => {
     const taskId = item.id;
     if (!taskId) return item.routePath;
 
-    return `/task/${taskId}`;
+    return taskDetailPath(taskId, item.agentId ?? undefined);
   }, []);
 
   if (!isInit) {
@@ -43,13 +44,13 @@ const RecentsList = memo(() => {
   return (
     <Flexbox gap={1}>
       {displayItems.map((item) => (
-        <Link
+        <WorkspaceLink
           key={`${item.type}-${item.id}`}
           style={{ color: 'inherit', textDecoration: 'none' }}
           to={getRecentRoute(item)}
         >
           <RecentListItem {...item} />
-        </Link>
+        </WorkspaceLink>
       ))}
       {hasMore && (
         <NavItem icon={MoreHorizontalIcon} title={t('input.more')} onClick={openDrawer} />

@@ -2,11 +2,12 @@ import type { TaskStatus } from '@lobechat/types';
 import { Block, ContextMenuTrigger, Flexbox, Text } from '@lobehub/ui';
 import { memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
 
+import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
 import { useTaskStore } from '@/store/task';
 import type { TaskListItem } from '@/store/task/slices/list/initialState';
 
+import { taskDetailPath } from '../shared/taskDetailPath';
 import AssigneeAgentSelector from './AssigneeAgentSelector';
 import AssigneeAvatar from './AssigneeAvatar';
 import { formatTaskItemDate } from './formatTaskItemDate';
@@ -21,6 +22,8 @@ interface TaskItemProps {
   task: TaskListItem;
   variant?: 'compact' | 'default';
 }
+
+const FLEX_MIN_WIDTH_0 = { minWidth: 0 };
 
 const TASK_STATUS_SET = new Set<TaskStatus>([
   'backlog',
@@ -44,7 +47,7 @@ const AgentTaskItem = memo<TaskItemProps>(({ task, variant = 'default' }) => {
   const taskDetail = useTaskStore((s) => s.taskDetailMap[task.identifier]);
   const { items: contextMenuItems, onContextMenu: handleContextMenuOpen } =
     useTaskItemContextMenu(task);
-  const navigate = useNavigate();
+  const navigate = useWorkspaceAwareNavigate();
 
   const time = formatTaskItemDate(task.updatedAt || task.createdAt, {
     formatOtherYear: t('time.formatOtherYear'),
@@ -55,12 +58,12 @@ const AgentTaskItem = memo<TaskItemProps>(({ task, variant = 'default' }) => {
   const hasName = Boolean(task.name?.trim());
 
   const handleClick = useCallback(() => {
-    navigate(`/task/${task.identifier}`);
-  }, [navigate, task.identifier]);
+    navigate(taskDetailPath(task.identifier, task.assigneeAgentId ?? undefined));
+  }, [navigate, task.assigneeAgentId, task.identifier]);
 
   const handleSubtaskClick = useCallback(
-    (identifier: string) => {
-      navigate(`/task/${identifier}`);
+    (identifier: string, assigneeAgentId?: string) => {
+      navigate(taskDetailPath(identifier, assigneeAgentId));
     },
     [navigate],
   );
@@ -162,7 +165,7 @@ const AgentTaskItem = memo<TaskItemProps>(({ task, variant = 'default' }) => {
             />
           </Flexbox>
           <TaskLatestActivity activities={taskDetail?.activities} />
-          <Flexbox horizontal align={'center'} gap={8}>
+          <Flexbox horizontal align={'center'} gap={8} style={FLEX_MIN_WIDTH_0}>
             <TaskPriorityTag priority={task.priority} taskIdentifier={task.identifier} />
             {scheduleNode}
             {timeNode}

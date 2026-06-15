@@ -12,12 +12,12 @@ import type {
   RunCommandParams,
   WriteLocalFileParams,
 } from '@lobechat/electron-client-ipc';
+import { LocalSystemExecutionRuntime } from '@lobechat/tool-runtime';
 import type { BuiltinToolResult } from '@lobechat/types';
 import { BaseExecutor } from '@lobechat/types';
 
 import { localFileService } from '@/services/electron/localFileService';
 
-import { LocalSystemExecutionRuntime } from '../../ExecutionRuntime';
 import { LocalSystemIdentifier } from '../../types';
 import { resolveArgsWithScope } from '../../utils/path';
 
@@ -66,7 +66,8 @@ class LocalSystemExecutor extends BaseExecutor<typeof LocalSystemApiEnum> {
   }): BuiltinToolResult {
     const errorMessage =
       typeof output.error?.message === 'string' ? output.error.message : undefined;
-    const safeContent = output.content || errorMessage || 'Tool execution failed';
+    const safeContent =
+      output.content || errorMessage || '[UNKNOWN_EXEC_ERROR] Tool execution failed';
 
     if (!output.success) {
       return {

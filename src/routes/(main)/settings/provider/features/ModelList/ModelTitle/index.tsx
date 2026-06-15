@@ -1,15 +1,18 @@
-import { ActionIcon, Button, DropdownMenu, Flexbox, Skeleton, Text } from '@lobehub/ui';
+import { ActionIcon, Button, DropdownMenu, Flexbox, Skeleton, Text, Tooltip } from '@lobehub/ui';
+import { confirmModal } from '@lobehub/ui/base-ui';
 import { App, Space } from 'antd';
 import { cssVar } from 'antd-style';
 import { CircleX, EllipsisVertical, LucideRefreshCcwDot, PlusIcon } from 'lucide-react';
-import { memo, useEffect, useState } from 'react';
+import { memo, use, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { usePermission } from '@/hooks/usePermission';
 import { useAiInfraStore } from '@/store/aiInfra';
 import { aiModelSelectors } from '@/store/aiInfra/selectors';
 
-import CreateNewModelModal from '../CreateNewModelModal';
+import { createCreateNewModelModal } from '../CreateNewModelModal';
+import { ProviderSettingsContext } from '../ProviderSettingsContext';
 import Search from './Search';
 
 interface ModelFetcherProps {
@@ -21,7 +24,8 @@ interface ModelFetcherProps {
 const ModelTitle = memo<ModelFetcherProps>(
   ({ provider, showAddNewModel = true, showModelFetcher = true }) => {
     const { t } = useTranslation('modelProvider');
-    const { modal, message } = App.useApp();
+    const { message } = App.useApp();
+    const { allowed: canManageProvider, reason } = usePermission('manage_provider_key');
     const [
       searchKeyword,
       totalModels,
@@ -46,7 +50,7 @@ const ModelTitle = memo<ModelFetcherProps>(
 
     const [fetchRemoteModelsLoading, setFetchRemoteModelsLoading] = useState(false);
     const [clearRemoteModelsLoading, setClearRemoteModelsLoading] = useState(false);
-    const [showModal, setShowModal] = useState(false);
+    const { showDeployName } = use(ProviderSettingsContext);
 
     const mobile = useIsMobile();
 
@@ -81,11 +85,13 @@ const ModelTitle = memo<ModelFetcherProps>(
                   {t('providerModels.list.total', { count: totalModels })}
                   {hasRemoteModels && (
                     <ActionIcon
+                      disabled={!canManageProvider}
                       icon={CircleX}
                       loading={clearRemoteModelsLoading}
                       size={'small'}
-                      title={t('providerModels.list.fetcher.clear')}
+                      title={canManageProvider ? t('providerModels.list.fetcher.clear') : undefined}
                       onClick={async () => {
+                        if (!canManageProvider) return;
                         setClearRemoteModelsLoading(true);
                         await clearObtainedModels(provider);
                         setClearRemoteModelsLoading(false);
@@ -110,44 +116,63 @@ const ModelTitle = memo<ModelFetcherProps>(
               )}
               <Space.Compact>
                 {showModelFetcher && (
-                  <Button
-                    icon={LucideRefreshCcwDot}
-                    loading={fetchRemoteModelsLoading}
-                    size={'small'}
-                    onClick={async () => {
-                      setFetchRemoteModelsLoading(true);
-                      try {
-                        await fetchRemoteModelList(provider);
-                      } catch (e) {
-                        console.error(e);
-                      }
-                      setFetchRemoteModelsLoading(false);
-                    }}
-                  >
-                    {fetchRemoteModelsLoading
-                      ? t('providerModels.list.fetcher.fetching')
-                      : t('providerModels.list.fetcher.fetch')}
-                  </Button>
+                  <Tooltip title={canManageProvider ? '' : reason}>
+                    <Button
+                      disabled={!canManageProvider}
+                      icon={LucideRefreshCcwDot}
+                      loading={fetchRemoteModelsLoading}
+                      size={'small'}
+                      onClick={async () => {
+                        if (!canManageProvider) return;
+                        setFetchRemoteModelsLoading(true);
+                        try {
+                          await fetchRemoteModelList(provider);
+                        } catch (error) {
+                          console.error(error);
+
+                          const errorMessage =
+                            error instanceof Error
+                              ? error.message
+                              : t('providerModels.list.fetcher.errorFallback');
+
+                          message.error(
+                            t('providerModels.list.fetcher.error', {
+                              message: errorMessage,
+                            }),
+                          );
+                        } finally {
+                          setFetchRemoteModelsLoading(false);
+                        }
+                      }}
+                    >
+                      {fetchRemoteModelsLoading
+                        ? t('providerModels.list.fetcher.fetching')
+                        : t('providerModels.list.fetcher.fetch')}
+                    </Button>
+                  </Tooltip>
                 )}
                 {showAddNewModel && (
-                  <>
+                  <Tooltip title={canManageProvider ? '' : reason}>
                     <Button
+                      disabled={!canManageProvider}
                       icon={PlusIcon}
                       size={'small'}
                       onClick={() => {
-                        setShowModal(true);
+                        if (!canManageProvider) return;
+                        createCreateNewModelModal({ showDeployName });
                       }}
                     />
-                    <CreateNewModelModal open={showModal} setOpen={setShowModal} />
-                  </>
+                  </Tooltip>
                 )}
                 <DropdownMenu
                   items={[
                     {
+                      disabled: !canManageProvider,
                       key: 'reset',
                       label: t('providerModels.list.resetAll.title'),
                       onClick: async () => {
-                        modal.confirm({
+                        if (!canManageProvider) return;
+                        confirmModal({
                           content: t('providerModels.list.resetAll.conform'),
                           onOk: async () => {
                             await clearModelsByProvider(provider);

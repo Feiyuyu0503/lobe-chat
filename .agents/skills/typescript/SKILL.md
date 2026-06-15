@@ -1,6 +1,6 @@
 ---
 name: typescript
-description: "TypeScript code style and type-safety guide for LobeHub. Read before writing or editing any `.ts` / `.tsx` / `.mts` — covers `interface` vs `type`, `Record<PropertyKey, unknown>` over `any`/`object`, `as const satisfies`, `@ts-expect-error` over `@ts-ignore`, `import type` (`separate-type-imports`), `async`/`await` + `Promise.all`, `for…of` over indexed `for`, and the no-silent-`.catch(() => fallback)` rule. Also use when reviewing type quality, deciding module augmentation (`declare module`) over `namespace`, or designing extensible types (e.g. `PipelineContext.metadata`). Triggers on any TypeScript file edit, 'fix the type', 'why is this `any`', 'should this be interface or type', 'eslint type-import', 'ts-expect-error'."
+description: 'LobeHub TypeScript style and type-safety guide. Use when editing TS/TSX/MTS, fixing types, choosing interface vs type, avoiding any/object, import type, async flow, or ts-expect-error.'
 user-invocable: false
 ---
 
@@ -48,6 +48,7 @@ user-invocable: false
 - Replace magic numbers/strings with well-named constants
 - Defer formatting to tooling
 - Prefer **named exports** over `export default` — keeps refactor renames and IDE auto-import in sync, and avoids the `default` re-naming drift you get with `import Foo from './foo'`. Reserve `export default` for files where the framework requires it (Next.js page/route/layout, React.lazy targets, config files like `vitest.config.ts`)
+- Before adding local helpers for common guards/parsing/normalization (record checks, string extraction, empty-string handling, timing helpers, JSON-safe utilities, etc.), search `packages/utils` first. If the helper already exists or clearly belongs there, import it from `@lobechat/utils` (or the relevant `@lobechat/utils/*` subpath) instead of duplicating tiny helpers across feature files.
 
 ## UI and Theming
 

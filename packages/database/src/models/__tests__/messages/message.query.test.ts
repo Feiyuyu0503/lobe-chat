@@ -1,6 +1,6 @@
 import { INBOX_SESSION_ID } from '@lobechat/const';
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { uuid } from '@/utils/uuid';
 
@@ -94,6 +94,35 @@ describe('MessageModel Query Tests', () => {
       expect(result).toHaveLength(2);
       expect(result[0].id).toBe('1');
       expect(result[1].id).toBe('2');
+    });
+
+    it('reads usage from the dedicated column and falls back to metadata.usage', async () => {
+      await serverDB.insert(messages).values([
+        // dedicated column must win over the legacy metadata.usage
+        {
+          id: 'usage-col',
+          userId,
+          role: 'assistant',
+          content: 'a',
+          createdAt: new Date('2023-01-01'),
+          usage: { totalTokens: 100 } as any,
+          metadata: { usage: { totalTokens: 999 } },
+        },
+        // legacy row: only metadata.usage → falls back
+        {
+          id: 'usage-meta',
+          userId,
+          role: 'assistant',
+          content: 'b',
+          createdAt: new Date('2023-01-02'),
+          metadata: { usage: { totalTokens: 50 } },
+        },
+      ]);
+
+      const result = await messageModel.query();
+
+      expect(result.find((m) => m.id === 'usage-col')?.usage).toEqual({ totalTokens: 100 });
+      expect(result.find((m) => m.id === 'usage-meta')?.usage).toEqual({ totalTokens: 50 });
     });
 
     it('should return empty messages if not match the user ID', async () => {
@@ -290,22 +319,73 @@ describe('MessageModel Query Tests', () => {
       });
 
       const domain = 'http://abc.com';
-      // Call query method
-      const result = await messageModel.query(
-        {},
-        { postProcessUrl: async (path) => `${domain}/${path}` },
+      const postProcessUrl = vi.fn(
+        async (path: string | null, file: { id?: string | null }) => `${domain}/${file.id}/${path}`,
       );
+      // Call query method
+      const result = await messageModel.query({}, { postProcessUrl });
 
       // Assert result
       expect(result).toHaveLength(2);
       expect(result[0].id).toBe('1');
       expect(result[0].imageList).toEqual([
-        { alt: 'file-1', id: 'f-0', url: `${domain}/abc` },
-        { alt: 'file-3', id: 'f-3', url: `${domain}/abc` },
+        { alt: 'file-1', id: 'f-0', url: `${domain}/f-0/abc` },
+        { alt: 'file-3', id: 'f-3', url: `${domain}/f-3/abc` },
       ]);
+      expect(postProcessUrl).toHaveBeenCalledWith(
+        'abc',
+        expect.objectContaining({ fileType: 'image/png', id: 'f-0' }),
+      );
+      expect(postProcessUrl).toHaveBeenCalledWith(
+        'abc',
+        expect.objectContaining({ fileType: 'image/png', id: 'f-3' }),
+      );
 
       expect(result[1].id).toBe('2');
       expect(result[1].imageList).toEqual([]);
+    });
+
+    it('should pass file id to postProcessUrl when querying messages by ids', async () => {
+      await serverDB.transaction(async (trx) => {
+        await trx.insert(messages).values({
+          id: 'query-by-id-message',
+          userId,
+          role: 'user',
+          content: 'message with file',
+          createdAt: new Date('2023-01-01'),
+        });
+        await trx.insert(files).values({
+          id: 'query-by-id-file',
+          url: 'files/query-by-id.png',
+          name: 'query-by-id.png',
+          userId,
+          fileType: 'image/png',
+          size: 1000,
+        });
+        await trx.insert(messagesFiles).values({
+          fileId: 'query-by-id-file',
+          messageId: 'query-by-id-message',
+          userId,
+        });
+      });
+
+      const postProcessUrl = vi.fn(
+        async (path: string | null, file: { id?: string | null }) => `/f/${file.id}/${path}`,
+      );
+
+      const result = await messageModel.queryByIds(['query-by-id-message'], { postProcessUrl });
+
+      expect(result[0].imageList).toEqual([
+        {
+          alt: 'query-by-id.png',
+          id: 'query-by-id-file',
+          url: '/f/query-by-id-file/files/query-by-id.png',
+        },
+      ]);
+      expect(postProcessUrl).toHaveBeenCalledWith(
+        'files/query-by-id.png',
+        expect.objectContaining({ fileType: 'image/png', id: 'query-by-id-file' }),
+      );
     });
 
     it('should include translate, tts and other extra fields in query result', async () => {
@@ -2874,6 +2954,136 @@ describe('MessageModel Query Tests', () => {
         expect(agent1Result[1].groupId).toBe('group-1');
         expect(agent2Result[1].groupId).toBe('group-1');
       });
+    });
+  });
+
+  describe('getLastChildToolMessageId', () => {
+    it('should return the most recently-created tool child of an assistant message', async () => {
+      await serverDB.insert(messages).values([
+        {
+          id: 'asst-1',
+          userId,
+          role: 'assistant',
+          content: 'assistant step',
+          createdAt: new Date('2023-01-01T00:00:00'),
+        },
+        {
+          id: 'tool-early',
+          userId,
+          role: 'tool',
+          parentId: 'asst-1',
+          content: 'first tool',
+          createdAt: new Date('2023-01-01T00:00:01'),
+        },
+        {
+          id: 'tool-late',
+          userId,
+          role: 'tool',
+          parentId: 'asst-1',
+          content: 'second tool',
+          createdAt: new Date('2023-01-01T00:00:02'),
+        },
+      ]);
+
+      const result = await messageModel.getLastChildToolMessageId('asst-1');
+      expect(result).toBe('tool-late');
+    });
+
+    it('should return undefined when the assistant produced no tool children', async () => {
+      await serverDB.insert(messages).values([
+        {
+          id: 'asst-no-tools',
+          userId,
+          role: 'assistant',
+          content: 'no tools here',
+          createdAt: new Date('2023-01-01'),
+        },
+        {
+          // a non-tool child must be ignored
+          id: 'child-assistant',
+          userId,
+          role: 'assistant',
+          parentId: 'asst-no-tools',
+          content: 'follow-up assistant',
+          createdAt: new Date('2023-01-02'),
+        },
+      ]);
+
+      const result = await messageModel.getLastChildToolMessageId('asst-no-tools');
+      expect(result).toBeUndefined();
+    });
+
+    it('should exclude subagent tool rows that live on their own thread', async () => {
+      await serverDB.transaction(async (trx) => {
+        await trx.insert(sessions).values([{ id: 'session1', userId }]);
+        await trx.insert(topics).values([{ id: 'topic1', sessionId: 'session1', userId }]);
+        await trx.insert(threads).values([
+          {
+            id: 'subagent-thread',
+            userId,
+            topicId: 'topic1',
+            sourceMessageId: 'asst-main',
+            type: 'standalone',
+          },
+        ]);
+        await trx.insert(messages).values([
+          {
+            id: 'asst-main',
+            userId,
+            role: 'assistant',
+            content: 'main agent step',
+            createdAt: new Date('2023-01-01T00:00:00'),
+          },
+          {
+            id: 'tool-main',
+            userId,
+            role: 'tool',
+            parentId: 'asst-main',
+            threadId: null,
+            content: 'main-agent tool',
+            createdAt: new Date('2023-01-01T00:00:01'),
+          },
+          {
+            // newer, but on a subagent thread — must not anchor the main wire
+            id: 'tool-subagent',
+            userId,
+            role: 'tool',
+            parentId: 'asst-main',
+            threadId: 'subagent-thread',
+            content: 'subagent tool',
+            createdAt: new Date('2023-01-01T00:00:02'),
+          },
+        ]);
+      });
+
+      const result = await messageModel.getLastChildToolMessageId('asst-main');
+      expect(result).toBe('tool-main');
+    });
+
+    it('should not return tool rows belonging to other users', async () => {
+      const otherModel = new MessageModel(serverDB, otherUserId);
+      await serverDB.insert(messages).values([
+        {
+          id: 'asst-shared-id',
+          userId: otherUserId,
+          role: 'assistant',
+          content: 'other user assistant',
+          createdAt: new Date('2023-01-01T00:00:00'),
+        },
+        {
+          id: 'tool-other-user',
+          userId: otherUserId,
+          role: 'tool',
+          parentId: 'asst-shared-id',
+          content: 'other user tool',
+          createdAt: new Date('2023-01-01T00:00:01'),
+        },
+      ]);
+
+      // current user must not see another user's tool rows
+      expect(await messageModel.getLastChildToolMessageId('asst-shared-id')).toBeUndefined();
+      // the owning user does
+      expect(await otherModel.getLastChildToolMessageId('asst-shared-id')).toBe('tool-other-user');
     });
   });
 });

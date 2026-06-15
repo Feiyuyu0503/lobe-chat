@@ -2,10 +2,12 @@
 
 import { Button, Icon } from '@lobehub/ui';
 import { LinkIcon, Trash2Icon } from 'lucide-react';
-import { memo, useState } from 'react';
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import LinkModal from '../LinkModal';
+import { usePermission } from '@/hooks/usePermission';
+
+import { createMessengerLinkModal } from '../LinkModal';
 import {
   DetailLayout,
   IntegrationDetailSkeleton,
@@ -27,7 +29,8 @@ interface TelegramDetailProps {
 // header.
 const TelegramDetail = memo<TelegramDetailProps>(({ appId, botUsername, name, onBack }) => {
   const { t } = useTranslation('messenger');
-  const [linkOpen, setLinkOpen] = useState(false);
+  const { allowed: canCreate } = usePermission('create_content');
+  const { allowed: canEdit } = usePermission('edit_own_content');
 
   const data = useMessengerData('telegram');
   const { handleSetActive, handleUnlink } = useLinkActions({
@@ -43,45 +46,50 @@ const TelegramDetail = memo<TelegramDetailProps>(({ appId, botUsername, name, on
   const hasLinks = links.length > 0;
   const link = links[0];
 
+  const handleOpenLink = () =>
+    createMessengerLinkModal({ appId, botUsername, name, platform: 'telegram' });
+
   const headerAction = hasLinks ? (
-    <Button danger icon={<Icon icon={Trash2Icon} />} onClick={() => handleUnlink('')}>
+    <Button
+      danger
+      disabled={!canEdit}
+      icon={<Icon icon={Trash2Icon} />}
+      onClick={() => {
+        if (!canEdit) return;
+        handleUnlink('');
+      }}
+    >
       {t('messenger.unlinkCta')}
     </Button>
   ) : (
-    <Button icon={<Icon icon={LinkIcon} />} type="primary" onClick={() => setLinkOpen(true)}>
+    <Button
+      disabled={!canCreate || !canEdit}
+      icon={<Icon icon={LinkIcon} />}
+      type="primary"
+      onClick={handleOpenLink}
+    >
       {t('messenger.linkCta')}
     </Button>
   );
 
   return (
-    <>
-      <DetailLayout
-        hasConnections={hasLinks}
-        headerAction={headerAction}
-        name={name}
-        platform="telegram"
-        onBack={onBack}
-      >
-        {link ? (
-          <UserAgentConnection
-            link={link}
-            onSetActive={(agentId) => handleSetActive('', agentId)}
-            onUnlink={() => handleUnlink('')}
-          />
-        ) : (
-          <div className={styles.emptyRow}>{t('messenger.detail.connections.empty')}</div>
-        )}
-      </DetailLayout>
-
-      <LinkModal
-        appId={appId}
-        botUsername={botUsername}
-        name={name}
-        open={linkOpen}
-        platform="telegram"
-        onClose={() => setLinkOpen(false)}
-      />
-    </>
+    <DetailLayout
+      hasConnections={hasLinks}
+      headerAction={headerAction}
+      name={name}
+      platform="telegram"
+      onBack={onBack}
+    >
+      {link ? (
+        <UserAgentConnection
+          link={link}
+          onSetActive={(agentId) => handleSetActive('', agentId)}
+          onUnlink={() => handleUnlink('')}
+        />
+      ) : (
+        <div className={styles.emptyRow}>{t('messenger.detail.connections.empty')}</div>
+      )}
+    </DetailLayout>
   );
 });
 

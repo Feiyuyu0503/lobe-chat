@@ -1,13 +1,26 @@
 import { isDesktop } from '@lobechat/const';
-import { Center, Empty, Flexbox, Highlighter, Icon, Markdown, Segmented, Text } from '@lobehub/ui';
+import type { MarkdownProps } from '@lobehub/ui';
+import {
+  ActionIcon,
+  Center,
+  Empty,
+  Flexbox,
+  Icon,
+  Image,
+  Markdown,
+  Segmented,
+  Text,
+} from '@lobehub/ui';
 import { createStaticStyles, cssVar } from 'antd-style';
-import { CodeIcon, EyeIcon } from 'lucide-react';
-import { memo, useEffect, useMemo, useState } from 'react';
+import { CodeIcon, EyeIcon, RefreshCwIcon } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import CodeEditorPane from '@/components/CodeEditorPane';
+import { InlineHtmlPreview, isHtmlFile } from '@/components/HtmlPreview';
 import Loading from '@/components/Loading/CircleLoading';
 import { useClientDataSWR } from '@/libs/swr';
-import { localFileService } from '@/services/electron/localFileService';
+import { type LocalFilePreview, projectFileService } from '@/services/projectFile';
 import { useChatStore } from '@/store/chat';
 import { chatPortalSelectors } from '@/store/chat/selectors';
 import {
@@ -18,65 +31,7 @@ import {
 } from '@/utils/skillMarkdown';
 
 import { extensionToLanguage, getFileExtension } from './Body.helpers';
-
-const MAX_PREVIEW_CHARS = 500_000;
-
-const TEXT_PREVIEW_MIME_TYPES = new Set([
-  'application/graphql',
-  'application/javascript',
-  'application/json',
-  'application/markdown',
-  'application/toml',
-  'application/xml',
-  'application/yaml',
-  'text/markdown',
-  'text/x-markdown',
-]);
-
-interface BinaryLocalFilePreview {
-  contentType: string;
-  type: 'binary';
-}
-
-interface ImageLocalFilePreview {
-  blob: Blob;
-  contentType: string;
-  type: 'image';
-}
-
-interface TextLocalFilePreview {
-  content: string;
-  contentType: string;
-  type: 'text';
-}
-
-type LocalFilePreview = BinaryLocalFilePreview | ImageLocalFilePreview | TextLocalFilePreview;
-
-const normalizeContentType = (contentType: string | null): string =>
-  contentType?.split(';')[0].trim().toLowerCase() ?? '';
-
-const isTextPreviewMimeType = (mimeType: string): boolean =>
-  mimeType.startsWith('text/') || TEXT_PREVIEW_MIME_TYPES.has(mimeType);
-
-const fetchLocalFilePreview = async (url: string): Promise<LocalFilePreview> => {
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error(`Failed to load local file: ${response.status}`);
-  }
-
-  const contentType = normalizeContentType(response.headers.get('content-type'));
-
-  if (contentType.startsWith('image/')) {
-    return { blob: await response.blob(), contentType, type: 'image' };
-  }
-
-  if (isTextPreviewMimeType(contentType)) {
-    return { content: await response.text(), contentType, type: 'text' };
-  }
-
-  return { contentType, type: 'binary' };
-};
+import MarkdownImage from './MarkdownImage';
 
 interface ImagePreviewProps {
   blob: Blob;
@@ -99,7 +54,13 @@ const ImagePreview = memo<ImagePreviewProps>(({ blob, filename }) => {
 
   return (
     <Center height={'100%'} style={{ overflow: 'auto' }} width={'100%'}>
-      <img alt={filename} src={imageSrc} style={{ maxWidth: '100%', objectFit: 'contain' }} />
+      <Image
+        alt={filename}
+        objectFit={'contain'}
+        src={imageSrc}
+        style={{ maxWidth: '100%' }}
+        variant={'borderless'}
+      />
     </Center>
   );
 });
@@ -166,21 +127,81 @@ SkillFrontmatterPreviewCard.displayName = 'SkillFrontmatterPreviewCard';
 
 type TextPreviewMode = 'render' | 'raw';
 
+const NO_TOPIC_KEY = '__no_topic__';
+
 interface TextPreviewPaneProps {
+  activeTopicId?: string | null;
   content: string;
+  contentType?: string;
+  deviceId?: string;
   ext: string;
-  truncated: boolean;
-  truncatedLabel: string;
+  filePath: string;
+  onReload?: () => Promise<unknown> | void;
+  onSaved?: (savedContent: string) => void;
+  readOnly?: boolean;
+  reloading?: boolean;
+  workingDirectory: string;
 }
 
 const TextPreviewPane = memo<TextPreviewPaneProps>(
-  ({ content, ext, truncated, truncatedLabel }) => {
+  ({
+    activeTopicId,
+    content,
+    contentType,
+    deviceId,
+    ext,
+    filePath,
+    onReload,
+    onSaved,
+    readOnly = false,
+    reloading = false,
+    workingDirectory,
+  }) => {
     const { t } = useTranslation('chat');
     const isMarkdown = useMemo(() => MARKDOWN_EXTS.has(ext.toLowerCase()), [ext]);
+    const isHtml = useMemo(
+      () => isHtmlFile({ fileType: contentType, path: filePath }),
+      [contentType, filePath],
+    );
+    const canRender = isMarkdown || isHtml;
+    const buffer = useChatStore(chatPortalSelectors.localFileBuffer(filePath));
+    const setLocalFileBuffer = useChatStore((s) => s.setLocalFileBuffer);
+    const saveLocalFile = useChatStore((s) => s.saveLocalFile);
+
+    const editingValue = readOnly ? content : (buffer ?? content);
+
+    const handleCodeChange = useCallback(
+      (next: string) => {
+        if (readOnly) return;
+
+        if (next === content) {
+          setLocalFileBuffer(filePath, undefined);
+        } else {
+          setLocalFileBuffer(filePath, next);
+        }
+      },
+      [content, filePath, readOnly, setLocalFileBuffer],
+    );
+
+    const handleSave = useCallback(async () => {
+      if (readOnly) return;
+
+      try {
+        const saved = await saveLocalFile(filePath);
+        if (saved === undefined) return;
+        // Update SWR cache BEFORE clearing the buffer, otherwise React will
+        // briefly render with buffer cleared but content still stale, causing
+        // CodeMirror to setValue and reset the cursor.
+        onSaved?.(saved);
+        setLocalFileBuffer(filePath, undefined);
+      } catch {
+        /* swallow — surfacing handled elsewhere if needed */
+      }
+    }, [filePath, onSaved, readOnly, saveLocalFile, setLocalFileBuffer]);
 
     const { body, frontmatter } = useMemo(
-      () => (isMarkdown ? parseSkillMarkdownFrontmatter(content) : { body: content }),
-      [isMarkdown, content],
+      () => (isMarkdown ? parseSkillMarkdownFrontmatter(editingValue) : { body: editingValue }),
+      [isMarkdown, editingValue],
     );
     const frontmatterFields = useMemo(
       () => (frontmatter ? parseSkillMarkdownFrontmatterFields(frontmatter) : {}),
@@ -190,16 +211,43 @@ const TextPreviewPane = memo<TextPreviewPaneProps>(
       () => (frontmatter ? parseSkillMarkdownMetadata(frontmatter) : []),
       [frontmatter],
     );
+    const previewTitle = isMarkdown
+      ? (frontmatterFields.name ?? '')
+      : (filePath.split('/').at(-1) ?? filePath);
+    const markdownComponents = useMemo(
+      () =>
+        ({
+          img: (props) => (
+            <MarkdownImage
+              {...props}
+              deviceId={deviceId}
+              markdownFilePath={filePath}
+              workingDirectory={workingDirectory}
+            />
+          ),
+        }) satisfies MarkdownProps['components'],
+      [deviceId, filePath, workingDirectory],
+    );
 
-    const [mode, setMode] = useState<TextPreviewMode>(isMarkdown ? 'render' : 'raw');
-
-    useEffect(() => {
-      setMode(isMarkdown ? 'render' : 'raw');
-    }, [isMarkdown]);
+    const [modeByScope, setModeByScope] = useState<Record<string, TextPreviewMode>>({});
+    const modeScopeKey = `${activeTopicId ?? NO_TOPIC_KEY}:${filePath}`;
+    const mode = canRender ? (modeByScope[modeScopeKey] ?? 'render') : 'raw';
+    const setMode = useCallback(
+      (next: TextPreviewMode) => {
+        setModeByScope((prev) => ({ ...prev, [modeScopeKey]: next }));
+      },
+      [modeScopeKey],
+    );
+    const showHtmlPreview = isHtml && mode === 'render';
+    const [htmlPreviewRevision, setHtmlPreviewRevision] = useState(0);
+    const handleReloadPreview = useCallback(async () => {
+      await onReload?.();
+      setHtmlPreviewRevision((prev) => prev + 1);
+    }, [onReload]);
 
     return (
       <Flexbox flex={1} height={'100%'} style={{ minHeight: 0, overflow: 'hidden' }}>
-        {isMarkdown && (
+        {canRender && (
           <Flexbox
             horizontal
             align={'center'}
@@ -209,8 +257,17 @@ const TextPreviewPane = memo<TextPreviewPaneProps>(
             style={{ flexShrink: 0 }}
           >
             <Text ellipsis style={{ flex: 1, fontSize: 13, fontWeight: 500, minWidth: 0 }}>
-              {frontmatterFields.name ?? ''}
+              {previewTitle}
             </Text>
+            {isHtml && (
+              <ActionIcon
+                icon={RefreshCwIcon}
+                loading={reloading}
+                size={'small'}
+                title={t('workingPanel.localFile.preview.reload')}
+                onClick={handleReloadPreview}
+              />
+            )}
             <Segmented
               size={'small'}
               value={mode}
@@ -222,7 +279,11 @@ const TextPreviewPane = memo<TextPreviewPaneProps>(
                 },
                 {
                   icon: <Icon icon={CodeIcon} />,
-                  label: t('workingPanel.localFile.preview.raw'),
+                  label: t(
+                    isHtml
+                      ? 'workingPanel.localFile.preview.source'
+                      : 'workingPanel.localFile.preview.raw',
+                  ),
                   value: 'raw',
                 },
               ]}
@@ -230,26 +291,30 @@ const TextPreviewPane = memo<TextPreviewPaneProps>(
             />
           </Flexbox>
         )}
-        {truncated && (
-          <Center paddingBlock={4} style={{ flexShrink: 0 }}>
-            <span style={{ fontSize: 12, opacity: 0.65 }}>{truncatedLabel}</span>
-          </Center>
-        )}
-        <Flexbox flex={1} style={{ minHeight: 0, overflow: 'auto' }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: showHtmlPreview ? 'hidden' : 'auto' }}>
           {isMarkdown && mode === 'render' ? (
             <>
               <SkillFrontmatterPreviewCard metadata={frontmatterMetadata} />
-              <Markdown style={{ paddingBlock: 8, paddingInline: 12 }}>{body}</Markdown>
+              <Markdown
+                components={markdownComponents}
+                style={{ paddingBlock: 8, paddingInline: 12 }}
+              >
+                {body}
+              </Markdown>
             </>
+          ) : showHtmlPreview ? (
+            <InlineHtmlPreview content={editingValue} key={`${filePath}:${htmlPreviewRevision}`} />
           ) : (
-            <Highlighter
+            <CodeEditorPane
               language={extensionToLanguage(ext)}
+              readOnly={readOnly}
               style={{ fontSize: 12, minHeight: '100%' }}
-            >
-              {content}
-            </Highlighter>
+              value={editingValue}
+              onChange={readOnly ? undefined : handleCodeChange}
+              onSave={readOnly ? undefined : handleSave}
+            />
           )}
-        </Flexbox>
+        </div>
       </Flexbox>
     );
   },
@@ -260,82 +325,87 @@ TextPreviewPane.displayName = 'TextPreviewPane';
 // ============== ActiveFileView ==============
 
 interface ActiveFileViewProps {
+  activeTopicId?: string | null;
+  deviceId?: string;
   filePath: string;
   workingDirectory: string;
 }
 
-const ActiveFileView = memo<ActiveFileViewProps>(({ filePath, workingDirectory }) => {
-  const { t } = useTranslation('chat');
+const ActiveFileView = memo<ActiveFileViewProps>(
+  ({ activeTopicId, deviceId, filePath, workingDirectory }) => {
+    const { t } = useTranslation('chat');
 
-  const filename = filePath.split('/').at(-1) ?? '';
-  const {
-    data: preview,
-    error,
-    isLoading,
-  } = useClientDataSWR(
-    isDesktop && workingDirectory ? ['local-file-preview', filePath, workingDirectory] : null,
-    async () => {
-      const result = await localFileService.getLocalFilePreviewUrl({
-        path: filePath,
-        workingDirectory,
-      });
-
-      if (!result.success || !result.url) {
-        throw new Error(result.error || 'Missing local file preview URL');
-      }
-
-      return fetchLocalFilePreview(result.url);
-    },
-    { revalidateOnFocus: false },
-  );
-
-  // Chromium blocks `file://` from a non-file origin. The desktop main process
-  // mints short-lived `localfile://` preview URLs for approved workspace files.
-  if (!isDesktop) {
-    return (
-      <Center height={'100%'} width={'100%'}>
-        <Empty description={t('workingPanel.localFile.binary')} />
-      </Center>
+    const filename = filePath.split('/').at(-1) ?? '';
+    const enabled = Boolean(workingDirectory) && (!!deviceId || isDesktop);
+    const {
+      data: preview,
+      error,
+      isLoading,
+      isValidating,
+      mutate,
+    } = useClientDataSWR<LocalFilePreview>(
+      enabled ? ['local-file-preview', deviceId ?? 'local', filePath, workingDirectory] : null,
+      () =>
+        projectFileService.getLocalFilePreview({
+          deviceId,
+          path: filePath,
+          workingDirectory,
+        }),
+      { revalidateOnFocus: false },
     );
-  }
 
-  if (isLoading) return <Loading />;
-
-  if (error || !preview) {
-    return (
-      <Center height={'100%'} width={'100%'}>
-        <Empty description={t('workingPanel.localFile.error')} />
-      </Center>
+    const handleSavedContent = useCallback(
+      (saved: string) => {
+        mutate((prev) => (prev && prev.type === 'text' ? { ...prev, content: saved } : prev), {
+          revalidate: false,
+        });
+      },
+      [mutate],
     );
-  }
 
-  if (preview.type === 'binary') {
+    const handleReload = useCallback(() => mutate(), [mutate]);
+
+    if (isLoading) return <Loading />;
+
+    if (error || !preview) {
+      return (
+        <Center height={'100%'} width={'100%'}>
+          <Empty description={t('workingPanel.localFile.error')} />
+        </Center>
+      );
+    }
+
+    if (preview.type === 'image') {
+      return <ImagePreview blob={preview.blob} filename={filename} />;
+    }
+
+    if (preview.type !== 'text') {
+      return (
+        <Center height={'100%'} width={'100%'}>
+          <Empty description={t('workingPanel.localFile.binary')} />
+        </Center>
+      );
+    }
+
+    const ext = getFileExtension(filename);
+
     return (
-      <Center height={'100%'} width={'100%'}>
-        <Empty description={t('workingPanel.localFile.binary')} />
-      </Center>
+      <TextPreviewPane
+        activeTopicId={activeTopicId}
+        content={preview.content}
+        contentType={preview.contentType}
+        deviceId={deviceId}
+        ext={ext}
+        filePath={filePath}
+        readOnly={!!deviceId}
+        reloading={isValidating}
+        workingDirectory={workingDirectory}
+        onReload={handleReload}
+        onSaved={handleSavedContent}
+      />
     );
-  }
-
-  if (preview.type === 'image') {
-    return <ImagePreview blob={preview.blob} filename={filename} />;
-  }
-
-  const ext = getFileExtension(filename);
-  const truncated = preview.content.length > MAX_PREVIEW_CHARS;
-  const displayContent = truncated ? preview.content.slice(0, MAX_PREVIEW_CHARS) : preview.content;
-
-  return (
-    <TextPreviewPane
-      content={displayContent}
-      ext={ext}
-      truncated={truncated}
-      truncatedLabel={t('workingPanel.localFile.truncated', {
-        limit: MAX_PREVIEW_CHARS.toLocaleString(),
-      })}
-    />
-  );
-});
+  },
+);
 
 ActiveFileView.displayName = 'ActiveFileView';
 
@@ -344,6 +414,14 @@ ActiveFileView.displayName = 'ActiveFileView';
 const Body = memo(() => {
   const openLocalFiles = useChatStore(chatPortalSelectors.openLocalFiles);
   const activeFile = useChatStore(chatPortalSelectors.currentLocalFile);
+  const activeTopicId = useChatStore((s) => s.activeTopicId);
+  const clearPortalStack = useChatStore((s) => s.clearPortalStack);
+
+  useEffect(() => {
+    if (openLocalFiles.length > 0 && activeFile) return;
+
+    clearPortalStack();
+  }, [activeFile, clearPortalStack, openLocalFiles.length]);
 
   if (openLocalFiles.length === 0) return null;
   if (!activeFile) return null;
@@ -351,6 +429,8 @@ const Body = memo(() => {
   return (
     <Flexbox flex={1} height={'100%'} style={{ minHeight: 0, overflow: 'hidden' }}>
       <ActiveFileView
+        activeTopicId={activeTopicId}
+        deviceId={activeFile.deviceId}
         filePath={activeFile.filePath}
         workingDirectory={activeFile.workingDirectory}
       />

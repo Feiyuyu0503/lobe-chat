@@ -1,4 +1,5 @@
 import { ActionIcon, EditableText, SortableList } from '@lobehub/ui';
+import { confirmModal } from '@lobehub/ui/base-ui';
 import { App } from 'antd';
 import { createStaticStyles } from 'antd-style';
 import { PencilLine, Trash } from 'lucide-react';
@@ -22,9 +23,13 @@ const styles = createStaticStyles(({ css }) => ({
   `,
 }));
 
-const GroupItem = memo<SessionGroupItem>(({ id, name }) => {
-  const { t } = useTranslation('chat');
-  const { message, modal } = App.useApp();
+interface GroupItemProps extends SessionGroupItem {
+  disabled?: boolean;
+}
+
+const GroupItem = memo<GroupItemProps>(({ id, name, disabled = false }) => {
+  const { t } = useTranslation(['chat', 'common']);
+  const { message } = App.useApp();
 
   const [editing, setEditing] = useState(false);
   const [updateSessionGroupName, removeSessionGroup] = useSessionStore((s) => [
@@ -34,25 +39,36 @@ const GroupItem = memo<SessionGroupItem>(({ id, name }) => {
 
   return (
     <>
-      <SortableList.DragHandle />
+      {!disabled && <SortableList.DragHandle />}
       {!editing ? (
         <>
           <span className={styles.title}>{name}</span>
-          <ActionIcon icon={PencilLine} size={'small'} onClick={() => setEditing(true)} />
           <ActionIcon
+            disabled={disabled}
+            icon={PencilLine}
+            size={'small'}
+            onClick={() => {
+              if (disabled) return;
+              setEditing(true);
+            }}
+          />
+          <ActionIcon
+            disabled={disabled}
             icon={Trash}
             size={'small'}
             onClick={() => {
-              modal.confirm({
-                centered: true,
+              if (disabled) return;
+              confirmModal({
+                cancelText: t('cancel', { ns: 'common' }),
+                content: t('sessionGroup.confirmRemoveGroupAlert'),
                 okButtonProps: {
                   danger: true,
-                  type: 'primary',
                 },
+                okText: t('delete', { ns: 'common' }),
                 onOk: async () => {
                   await removeSessionGroup(id);
                 },
-                title: t('sessionGroup.confirmRemoveGroupAlert'),
+                title: t('delete', { ns: 'common' }),
               });
             }}
           />
@@ -65,6 +81,7 @@ const GroupItem = memo<SessionGroupItem>(({ id, name }) => {
           value={name}
           onEditingChange={(e) => setEditing(e)}
           onChangeEnd={async (input) => {
+            if (disabled) return;
             if (name !== input) {
               if (!input) return;
               if (input.length === 0 || input.length > 20 || input.trim() === '')

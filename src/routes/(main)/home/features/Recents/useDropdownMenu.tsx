@@ -1,10 +1,13 @@
 import { type MenuProps } from '@lobehub/ui';
 import { Icon } from '@lobehub/ui';
-import { App } from 'antd';
+import { confirmModal } from '@lobehub/ui/base-ui';
 import { PencilLineIcon, Trash } from 'lucide-react';
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useDocumentTransferMenuItem } from '@/business/client/hooks/useDocumentTransferMenuItem';
+import { useTaskTransferMenuItem } from '@/business/client/hooks/useTaskTransferMenuItem';
+import { usePermission } from '@/hooks/usePermission';
 import { type RecentItem } from '@/server/routers/lambda/recent';
 import { documentService } from '@/services/document';
 import { taskService } from '@/services/task';
@@ -16,11 +19,24 @@ export const useRecentItemDropdownMenu = (
   toggleEditing: (visible?: boolean) => void,
 ) => {
   const { t } = useTranslation(['common', 'topic', 'components']);
-  const { modal } = App.useApp();
   const [updateRecentTitle, refreshRecents] = useHomeStore((s) => [
     s.updateRecentTitle,
     s.refreshRecents,
   ]);
+
+  // Viewer can read recents but cannot rename/delete them — keep the menu
+  // items visible-but-disabled so the affordance is clear (per disabled-not-
+  // hidden UX rule).
+  const { allowed: canEdit } = usePermission('edit_own_content');
+
+  // Cross-workspace Transfer to… / Copy to… items. Only document and task recents
+  // have a transfer flow today; topic has none. Hooks are called unconditionally and
+  // return null unless the matching id is passed (and the workspace feature is on).
+  const documentTransferItems = useDocumentTransferMenuItem(
+    item.type === 'document' ? item.id : undefined,
+  );
+  const taskTransferItems = useTaskTransferMenuItem(item.type === 'task' ? item.id : undefined);
+  const transferMenuItems = documentTransferItems ?? taskTransferItems;
 
   const handleRename = useCallback(
     async (newTitle: string) => {
@@ -52,9 +68,11 @@ export const useRecentItemDropdownMenu = (
       topic: t('actions.confirmRemoveTopic', { ns: 'topic' }),
     };
 
-    modal.confirm({
-      centered: true,
+    confirmModal({
+      cancelText: t('cancel', { ns: 'common' }),
+      content: confirmMessages[item.type],
       okButtonProps: { danger: true },
+      okText: t('delete', { ns: 'common' }),
       onOk: async () => {
         switch (item.type) {
           case 'topic': {
@@ -73,33 +91,31 @@ export const useRecentItemDropdownMenu = (
         }
         await refreshRecents();
       },
-      title: confirmMessages[item.type] || t('delete', { ns: 'common' }),
+      title: t('delete', { ns: 'common' }),
     });
-  }, [item, modal, t, refreshRecents]);
+  }, [item, t, refreshRecents]);
 
   const dropdownMenu = useCallback((): MenuProps['items'] => {
-    const canRename = true;
-
     return [
-      ...(canRename
-        ? [
-            {
-              icon: <Icon icon={PencilLineIcon} />,
-              key: 'rename',
-              label: t('rename'),
-              onClick: () => toggleEditing(true),
-            },
-          ]
-        : []),
+      {
+        disabled: !canEdit,
+        icon: <Icon icon={PencilLineIcon} />,
+        key: 'rename',
+        label: t('rename'),
+        onClick: () => toggleEditing(true),
+      },
+      ...(transferMenuItems ?? []),
+      ...(transferMenuItems?.length ? [{ type: 'divider' as const }] : []),
       {
         danger: true,
+        disabled: !canEdit,
         icon: <Icon icon={Trash} />,
         key: 'delete',
         label: t('delete'),
         onClick: handleDelete,
       },
     ];
-  }, [item.type, t, toggleEditing, handleDelete]);
+  }, [canEdit, t, toggleEditing, handleDelete, transferMenuItems]);
 
   return { dropdownMenu, handleRename };
 };

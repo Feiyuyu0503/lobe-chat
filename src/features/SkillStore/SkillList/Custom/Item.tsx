@@ -1,7 +1,7 @@
 'use client';
 
 import { ActionIcon, Block, DropdownMenu, Flexbox, Icon } from '@lobehub/ui';
-import { App } from 'antd';
+import { confirmModal } from '@lobehub/ui/base-ui';
 import { createStaticStyles, cssVar } from 'antd-style';
 import { MoreVerticalIcon, PackageSearch, Trash2 } from 'lucide-react';
 import { memo, useState } from 'react';
@@ -11,6 +11,7 @@ import MCPTag from '@/components/Plugins/MCPTag';
 import PluginAvatar from '@/components/Plugins/PluginAvatar';
 import PluginDetailModal from '@/features/PluginDetailModal';
 import DevModal from '@/features/PluginDevModal';
+import { usePermission } from '@/hooks/usePermission';
 import { useAgentStore } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
 import { useToolStore } from '@/store/tool';
@@ -45,9 +46,9 @@ interface ItemProps {
 
 const Item = memo<ItemProps>(({ identifier, title, description, avatar }) => {
   const { t } = useTranslation('plugin');
-  const { modal } = App.useApp();
   const [configOpen, setConfigOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
+  const { allowed: canEdit } = usePermission('edit_own_content');
 
   const [customPlugin, uninstallPlugin, updateCustomPlugin, pluginManifest] = useToolStore((s) => [
     pluginSelectors.getCustomPluginById(identifier)(s),
@@ -62,8 +63,8 @@ const Item = memo<ItemProps>(({ identifier, title, description, avatar }) => {
   ]);
 
   const handleDelete = () => {
-    modal.confirm({
-      centered: true,
+    if (!canEdit) return;
+    confirmModal({
       okButtonProps: { danger: true },
       onOk: async () => {
         if (isPluginEnabledInAgent) {
@@ -72,7 +73,6 @@ const Item = memo<ItemProps>(({ identifier, title, description, avatar }) => {
         await uninstallPlugin(identifier);
       },
       title: t('store.actions.confirmUninstall'),
-      type: 'error',
     });
   };
 
@@ -99,6 +99,7 @@ const Item = memo<ItemProps>(({ identifier, title, description, avatar }) => {
           </Flexbox>
           <Flexbox horizontal>
             <ActionIcon
+              disabled={!canEdit}
               icon={PackageSearch}
               title={t('store.actions.manifest')}
               onClick={() => setConfigOpen(true)}
@@ -109,6 +110,7 @@ const Item = memo<ItemProps>(({ identifier, title, description, avatar }) => {
               items={[
                 {
                   danger: true,
+                  disabled: !canEdit,
                   icon: <Icon icon={Trash2} />,
                   key: 'uninstall',
                   label: t('store.actions.uninstall'),
@@ -116,7 +118,7 @@ const Item = memo<ItemProps>(({ identifier, title, description, avatar }) => {
                 },
               ]}
             >
-              <ActionIcon icon={MoreVerticalIcon} />
+              <ActionIcon disabled={!canEdit} icon={MoreVerticalIcon} />
             </DropdownMenu>
           </Flexbox>
         </Block>
@@ -128,12 +130,14 @@ const Item = memo<ItemProps>(({ identifier, title, description, avatar }) => {
           value={customPlugin}
           onOpenChange={setConfigOpen}
           onDelete={async () => {
+            if (!canEdit) return;
             if (isPluginEnabledInAgent) {
               await togglePlugin(identifier, false);
             }
             await uninstallPlugin(identifier);
           }}
           onSave={async (value) => {
+            if (!canEdit) return;
             await updateCustomPlugin(identifier, value);
           }}
         />

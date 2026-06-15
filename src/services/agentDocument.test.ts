@@ -2,13 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { mutate } from '@/libs/swr';
 
-import {
-  agentDocumentService,
-  mapAgentDocumentsToContext,
-  resolveAgentDocumentsContext,
-} from './agentDocument';
+import { agentDocumentService, resolveAgentDocumentsContext } from './agentDocument';
 
-const { queryMock } = vi.hoisted(() => ({
+const { contextDocumentsQueryMock, queryMock } = vi.hoisted(() => ({
+  contextDocumentsQueryMock: vi.fn(),
   queryMock: vi.fn(),
 }));
 
@@ -21,6 +18,7 @@ vi.mock('@/libs/trpc/client', () => ({
     agentDocument: {
       copyDocument: { mutate: queryMock },
       createDocument: { mutate: queryMock },
+      getContextDocuments: { query: contextDocumentsQueryMock },
       getDocuments: { query: queryMock },
       getTemplates: { query: queryMock },
       initializeFromTemplate: { mutate: queryMock },
@@ -37,8 +35,10 @@ vi.mock('@/libs/trpc/client', () => ({
 describe('AgentDocumentService', () => {
   beforeEach(() => {
     queryMock.mockResolvedValue({ ok: true });
+    contextDocumentsQueryMock.mockResolvedValue({ ok: true });
     vi.mocked(mutate).mockClear();
     queryMock.mockClear();
+    contextDocumentsQueryMock.mockClear();
   });
 
   afterEach(() => {
@@ -82,42 +82,14 @@ describe('AgentDocumentService', () => {
     expect(mutate).toHaveBeenCalledWith(['agent-documents', 'agent-1']);
   });
 
-  it('should map fetched documents into context format', () => {
-    expect(
-      mapAgentDocumentsToContext([
-        {
-          content: 'Target agent setup',
-          filename: 'setup.md',
-          id: 'doc-1',
-          loadRules: [],
-          policy: null,
-          policyLoadFormat: null,
-          policyLoadPosition: null,
-          templateId: null,
-          title: 'Setup',
-        },
-      ] as any),
-    ).toEqual([
-      {
-        content: 'Target agent setup',
-        filename: 'setup.md',
-        id: 'doc-1',
-        loadPosition: undefined,
-        loadRules: [],
-        policyId: null,
-        policyLoadFormat: undefined,
-        title: 'Setup',
-      },
-    ]);
-  });
-
   it('should fetch target agent documents when cache is missing', async () => {
-    queryMock.mockResolvedValueOnce([
+    contextDocumentsQueryMock.mockResolvedValueOnce([
       {
         content: 'Target agent setup',
+        contentCharCount: 'Target agent setup'.length,
         filename: 'setup.md',
         id: 'doc-1',
-        loadRules: [],
+        loadRules: {},
         policy: null,
         policyLoadFormat: null,
         policyLoadPosition: null,
@@ -131,19 +103,21 @@ describe('AgentDocumentService', () => {
         agentId: 'target-agent',
       }),
     ).resolves.toEqual([
-      {
+      expect.objectContaining({
         content: 'Target agent setup',
+        contentCharCount: 'Target agent setup'.length,
         filename: 'setup.md',
         id: 'doc-1',
         loadPosition: undefined,
-        loadRules: [],
+        loadRules: {},
         policyId: null,
         policyLoadFormat: undefined,
         title: 'Setup',
-      },
+      }),
     ]);
 
-    expect(queryMock).toHaveBeenCalledWith({ agentId: 'target-agent' });
+    expect(contextDocumentsQueryMock).toHaveBeenCalledWith({ agentId: 'target-agent' });
+    expect(queryMock).not.toHaveBeenCalled();
   });
 
   it('should reuse cached agent documents without refetching', async () => {
@@ -163,6 +137,7 @@ describe('AgentDocumentService', () => {
       }),
     ).resolves.toBe(cachedDocuments);
 
+    expect(contextDocumentsQueryMock).not.toHaveBeenCalled();
     expect(queryMock).not.toHaveBeenCalled();
   });
 });

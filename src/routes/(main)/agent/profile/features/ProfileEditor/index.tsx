@@ -1,6 +1,7 @@
 'use client';
 
 import { isDesktop } from '@lobechat/const';
+import { isRemoteHeterogeneousType } from '@lobechat/heterogeneous-agents';
 import { Flexbox } from '@lobehub/ui';
 import { Divider, Tabs } from 'antd';
 import isEqual from 'fast-deep-equal';
@@ -8,6 +9,7 @@ import React, { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import ModelSelect from '@/features/ModelSelect';
+import { usePermission } from '@/hooks/usePermission';
 import { useAgentStore } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
 
@@ -17,15 +19,18 @@ import AgentHeader from './AgentHeader';
 import AgentTool from './AgentTool';
 import CloudHeterogeneousConfig from './CloudHeterogeneousConfig';
 import HeterogeneousAgentStatusCard from './HeterogeneousAgentStatusCard';
+import RemoteAgentConfigCard from './RemoteAgentConfigCard';
 
 const ProfileEditor = memo(() => {
   const { t } = useTranslation('setting');
+  const { allowed: canEdit } = usePermission('edit_own_content');
   const config = useAgentStore(agentSelectors.currentAgentConfig, isEqual);
   const updateConfig = useAgentStore((s) => s.updateAgentConfig);
   const isHeterogeneous = useAgentStore(agentSelectors.isCurrentAgentHeterogeneous);
   const heterogeneousProvider = config.agencyConfig?.heterogeneousProvider;
 
   const updateHeterogeneousCommand = async (command: string) => {
+    if (!canEdit) return;
     if (!heterogeneousProvider) return;
     await updateConfig({
       agencyConfig: {
@@ -35,6 +40,7 @@ const ProfileEditor = memo(() => {
   };
 
   const updateHeterogeneousEnv = async (env: Record<string, string>) => {
+    if (!canEdit) return;
     if (!heterogeneousProvider) return;
     await updateConfig({
       agencyConfig: {
@@ -42,6 +48,15 @@ const ProfileEditor = memo(() => {
       },
     });
   };
+
+  const updateBoundDeviceId = async (boundDeviceId: string) => {
+    await updateConfig({ agencyConfig: { ...config.agencyConfig, boundDeviceId } });
+  };
+
+  const isRemoteHetero =
+    isHeterogeneous &&
+    !!heterogeneousProvider &&
+    isRemoteHeterogeneousType(heterogeneousProvider.type);
 
   return (
     <>
@@ -53,8 +68,16 @@ const ProfileEditor = memo(() => {
       >
         {/* Header: Avatar + Name + Description */}
         <AgentHeader />
-        {isHeterogeneous && heterogeneousProvider ? (
-          // Heterogeneous integration mode: tabs for cloud (web) and desktop environments
+        {isRemoteHetero && heterogeneousProvider ? (
+          // Remote platform agents (openclaw / hermes): show device config panel
+          <Flexbox paddingBlock={'8px 0'}>
+            <RemoteAgentConfigCard
+              provider={heterogeneousProvider}
+              onBoundDeviceChange={updateBoundDeviceId}
+            />
+          </Flexbox>
+        ) : isHeterogeneous && heterogeneousProvider ? (
+          // Local CLI agents (claude-code, codex): tabs for cloud (web) and desktop environments
           <Tabs
             defaultActiveKey={isDesktop ? 'desktop' : 'cloud'}
             size="small"
@@ -94,12 +117,17 @@ const ProfileEditor = memo(() => {
             >
               <ModelSelect
                 initialWidth
+                disabled={!canEdit}
                 popupWidth={400}
                 value={{
                   model: config.model,
                   provider: config.provider,
                 }}
-                onChange={updateConfig}
+                onChange={(value) => {
+                  if (!canEdit) return;
+
+                  updateConfig(value);
+                }}
               />
             </Flexbox>
             <AgentTool />

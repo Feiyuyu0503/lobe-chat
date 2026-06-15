@@ -7,8 +7,10 @@ import type {
   EvalTestCaseContent,
   EvalTestCaseMetadata,
 } from '@lobechat/types';
+import { isNotNull, isNull } from 'drizzle-orm';
 import {
   boolean,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -24,6 +26,7 @@ import { createdAt, timestamps, timestamptz } from './_helpers';
 import { agents } from './agent';
 import { topics } from './topic';
 import { users } from './user';
+import { workspaces } from './workspace';
 
 const evalModes = [
   'equals',
@@ -67,20 +70,86 @@ export const agentEvalBenchmarks = pgTable(
     metadata: jsonb('metadata').$type<Record<string, unknown>>(),
 
     userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    workspaceId: text('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
 
     isSystem: boolean('is_system').default(true).notNull(),
 
     ...timestamps,
   },
   (t) => [
-    uniqueIndex('agent_eval_benchmarks_identifier_user_id_unique').on(t.identifier, t.userId),
+    uniqueIndex('agent_eval_benchmarks_identifier_user_id_unique')
+      .on(t.identifier, t.userId)
+      .where(isNull(t.workspaceId)),
     index('agent_eval_benchmarks_is_system_idx').on(t.isSystem),
     index('agent_eval_benchmarks_user_id_idx').on(t.userId),
+    index('agent_eval_benchmarks_workspace_id_idx').on(t.workspaceId),
+    uniqueIndex('agent_eval_benchmarks_identifier_workspace_id_unique')
+      .on(t.workspaceId, t.identifier)
+      .where(isNotNull(t.workspaceId)),
   ],
 );
 
 export type NewAgentEvalBenchmark = typeof agentEvalBenchmarks.$inferInsert;
 export type AgentEvalBenchmarkItem = typeof agentEvalBenchmarks.$inferSelect;
+
+// agent_eval_experiments
+export const agentEvalExperiments = pgTable(
+  'agent_eval_experiments',
+  {
+    id: text('id')
+      .$defaultFn(() => idGenerator('evalExperiments'))
+      .primaryKey(),
+
+    userId: text('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    workspaceId: text('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
+
+    name: text('name').notNull(),
+    description: text('description'),
+
+    metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+
+    ...timestamps,
+  },
+  (t) => [
+    index('agent_eval_experiments_user_id_idx').on(t.userId),
+    index('agent_eval_experiments_workspace_id_idx').on(t.workspaceId),
+  ],
+);
+
+export type NewAgentEvalExperiment = typeof agentEvalExperiments.$inferInsert;
+export type AgentEvalExperimentItem = typeof agentEvalExperiments.$inferSelect;
+
+// agent_eval_experiment_benchmarks
+export const agentEvalExperimentBenchmarks = pgTable(
+  'agent_eval_experiment_benchmarks',
+  {
+    experimentId: text('experiment_id')
+      .references(() => agentEvalExperiments.id, { onDelete: 'cascade' })
+      .notNull(),
+
+    benchmarkId: text('benchmark_id')
+      .references(() => agentEvalBenchmarks.id, { onDelete: 'cascade' })
+      .notNull(),
+
+    userId: text('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    workspaceId: text('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
+
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.experimentId, t.benchmarkId] }),
+    index('agent_eval_experiment_benchmarks_benchmark_id_idx').on(t.benchmarkId),
+    index('agent_eval_experiment_benchmarks_user_id_idx').on(t.userId),
+    index('agent_eval_experiment_benchmarks_workspace_id_idx').on(t.workspaceId),
+  ],
+);
+
+export type NewAgentEvalExperimentBenchmark = typeof agentEvalExperimentBenchmarks.$inferInsert;
+export type AgentEvalExperimentBenchmarkItem = typeof agentEvalExperimentBenchmarks.$inferSelect;
 
 // ============================================
 // 2. agent_eval_datasets (Evaluation Datasets)
@@ -96,9 +165,14 @@ export const agentEvalDatasets = pgTable(
       .references(() => agentEvalBenchmarks.id, { onDelete: 'cascade' })
       .notNull(),
 
+    sourceExperimentId: text('source_experiment_id').references(() => agentEvalExperiments.id, {
+      onDelete: 'set null',
+    }),
+
     identifier: text('identifier').notNull(),
 
     userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    workspaceId: text('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
 
     name: text('name').notNull(),
     description: text('description'),
@@ -111,9 +185,16 @@ export const agentEvalDatasets = pgTable(
     ...timestamps,
   },
   (t) => [
-    uniqueIndex('agent_eval_datasets_identifier_user_id_unique').on(t.identifier, t.userId),
+    uniqueIndex('agent_eval_datasets_identifier_user_id_unique')
+      .on(t.identifier, t.userId)
+      .where(isNull(t.workspaceId)),
     index('agent_eval_datasets_benchmark_id_idx').on(t.benchmarkId),
+    index('agent_eval_datasets_source_experiment_id_idx').on(t.sourceExperimentId),
     index('agent_eval_datasets_user_id_idx').on(t.userId),
+    index('agent_eval_datasets_workspace_id_idx').on(t.workspaceId),
+    uniqueIndex('agent_eval_datasets_identifier_workspace_id_unique')
+      .on(t.workspaceId, t.identifier)
+      .where(isNotNull(t.workspaceId)),
   ],
 );
 
@@ -133,6 +214,7 @@ export const agentEvalTestCases = pgTable(
     userId: text('user_id')
       .references(() => users.id, { onDelete: 'cascade' })
       .notNull(),
+    workspaceId: text('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
 
     datasetId: text('dataset_id')
       .references(() => agentEvalDatasets.id, { onDelete: 'cascade' })
@@ -153,6 +235,7 @@ export const agentEvalTestCases = pgTable(
     index('agent_eval_test_cases_user_id_idx').on(t.userId),
     index('agent_eval_test_cases_dataset_id_idx').on(t.datasetId),
     index('agent_eval_test_cases_sort_order_idx').on(t.sortOrder),
+    index('agent_eval_test_cases_workspace_id_idx').on(t.workspaceId),
   ],
 );
 
@@ -173,11 +256,16 @@ export const agentEvalRuns = pgTable(
       .references(() => agentEvalDatasets.id, { onDelete: 'cascade' })
       .notNull(),
 
+    experimentId: text('experiment_id').references(() => agentEvalExperiments.id),
+
+    parentRunId: text('parent_run_id'),
+
     targetAgentId: text('target_agent_id').references(() => agents.id, { onDelete: 'cascade' }),
 
     userId: text('user_id')
       .references(() => users.id, { onDelete: 'cascade' })
       .notNull(),
+    workspaceId: text('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
 
     name: text('name'),
 
@@ -196,10 +284,18 @@ export const agentEvalRuns = pgTable(
     ...timestamps,
   },
   (t) => [
+    foreignKey({
+      columns: [t.parentRunId],
+      foreignColumns: [t.id],
+      name: 'agent_eval_runs_parent_run_id_agent_eval_runs_id_fk',
+    }),
     index('agent_eval_runs_dataset_id_idx').on(t.datasetId),
+    index('agent_eval_runs_experiment_id_idx').on(t.experimentId),
+    index('agent_eval_runs_parent_run_id_idx').on(t.parentRunId),
     index('agent_eval_runs_user_id_idx').on(t.userId),
     index('agent_eval_runs_status_idx').on(t.status),
     index('agent_eval_runs_target_agent_id_idx').on(t.targetAgentId),
+    index('agent_eval_runs_workspace_id_idx').on(t.workspaceId),
   ],
 );
 
@@ -215,6 +311,7 @@ export const agentEvalRunTopics = pgTable(
     userId: text('user_id')
       .references(() => users.id, { onDelete: 'cascade' })
       .notNull(),
+    workspaceId: text('workspace_id').references(() => workspaces.id, { onDelete: 'cascade' }),
 
     runId: text('run_id')
       .references(() => agentEvalRuns.id, { onDelete: 'cascade' })
@@ -243,6 +340,7 @@ export const agentEvalRunTopics = pgTable(
     index('agent_eval_run_topics_user_id_idx').on(t.userId),
     index('agent_eval_run_topics_run_id_idx').on(t.runId),
     index('agent_eval_run_topics_test_case_id_idx').on(t.testCaseId),
+    index('agent_eval_run_topics_workspace_id_idx').on(t.workspaceId),
   ],
 );
 

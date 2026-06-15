@@ -1,3 +1,6 @@
+import { mkdtemp, readdir, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import { Command } from 'commander';
@@ -8,9 +11,18 @@ import { registerHeteroCommand } from './hetero';
 const { mockSpawnAgent } = vi.hoisted(() => ({
   mockSpawnAgent: vi.fn(),
 }));
+const { mockGetTrpcClient, mockHeteroFinishMutate, mockHeteroIngestMutate } = vi.hoisted(() => ({
+  mockGetTrpcClient: vi.fn(),
+  mockHeteroFinishMutate: vi.fn(),
+  mockHeteroIngestMutate: vi.fn(),
+}));
 
 vi.mock('@lobechat/heterogeneous-agents/spawn', () => ({
   spawnAgent: mockSpawnAgent,
+}));
+
+vi.mock('../api/client', () => ({
+  getTrpcClient: mockGetTrpcClient,
 }));
 
 vi.mock('../utils/logger', () => ({
@@ -77,6 +89,17 @@ describe('hetero exec command', () => {
     }) as any);
     stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     mockSpawnAgent.mockReset();
+    mockHeteroIngestMutate.mockReset();
+    mockHeteroFinishMutate.mockReset();
+    mockGetTrpcClient.mockReset();
+    mockHeteroIngestMutate.mockResolvedValue({ ack: true });
+    mockHeteroFinishMutate.mockResolvedValue({ ack: true });
+    mockGetTrpcClient.mockResolvedValue({
+      aiAgent: {
+        heteroFinish: { mutate: mockHeteroFinishMutate },
+        heteroIngest: { mutate: mockHeteroIngestMutate },
+      },
+    });
   });
 
   afterEach(() => {
@@ -340,5 +363,509 @@ describe('hetero exec command', () => {
     ]);
     expect(exitSpy).toHaveBeenCalledWith(2);
     expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  describe('--resume auto-retry on session-not-found', () => {
+    it('retries without --resume when the error stream event indicates the session is gone', async () => {
+      // First spawn: exits non-zero, emits a resume-not-found error event
+      const resumeNotFoundEvent = {
+        data: {
+          error: 'No conversation found with session ID cc-stale',
+          message: 'No conversation found with session ID cc-stale',
+        },
+        operationId: 'op-r1',
+        stepIndex: 0,
+        timestamp: 1,
+        type: 'error',
+      };
+      mockSpawnAgent
+        .mockReturnValueOnce(createFakeHandle({ events: [resumeNotFoundEvent], exitCode: 1 }))
+        // Second spawn: succeeds
+        .mockReturnValueOnce(createFakeHandle({ exitCode: 0 }));
+
+      await runCmd([
+        'hetero',
+        'exec',
+        '--type',
+        'claude-code',
+        '--prompt',
+        'do the thing',
+        '--resume',
+        'cc-stale',
+        '--operation-id',
+        'op-r1',
+      ]);
+
+      // Two spawns: first with --resume, retry without
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
+      expect(mockSpawnAgent.mock.calls[0][0]).toMatchObject({ resumeSessionId: 'cc-stale' });
+      expect(mockSpawnAgent.mock.calls[1][0]).not.toHaveProperty('resumeSessionId');
+      expect(mockSpawnAgent.mock.calls[1][0].resumeSessionId).toBeUndefined();
+
+      // Final exit code comes from the retry (0 → success)
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    });
+
+    it('retries without --resume when stderr contains a session-not-found message', async () => {
+      // First spawn: exits non-zero with no events, but stderr has the pattern
+      mockSpawnAgent
+        .mockReturnValueOnce(
+          createFakeHandle({
+            exitCode: 1,
+            stderrChunks: ['Error: No conversation found with session ID xyz\n'],
+          }),
+        )
+        .mockReturnValueOnce(createFakeHandle({ exitCode: 0 }));
+
+      await runCmd([
+        'hetero',
+        'exec',
+        '--type',
+        'claude-code',
+        '--prompt',
+        'continue',
+        '--resume',
+        'xyz',
+        '--operation-id',
+        'op-r2',
+      ]);
+
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
+      expect(mockSpawnAgent.mock.calls[1][0].resumeSessionId).toBeUndefined();
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    });
+
+    it('retries without --resume when the error indicates context overflow', async () => {
+      const contextOverflowEvent = {
+        data: {
+          error: 'prompt is too long: 215168 tokens > 200000 maximum',
+          message: 'prompt is too long: 215168 tokens > 200000 maximum',
+        },
+        operationId: 'op-ctx',
+        stepIndex: 0,
+        timestamp: 1,
+        type: 'error',
+      };
+      mockSpawnAgent
+        .mockReturnValueOnce(createFakeHandle({ events: [contextOverflowEvent], exitCode: 1 }))
+        .mockReturnValueOnce(createFakeHandle({ exitCode: 0 }));
+
+      await runCmd([
+        'hetero',
+        'exec',
+        '--type',
+        'claude-code',
+        '--prompt',
+        'next question',
+        '--resume',
+        'cc-longctx',
+        '--operation-id',
+        'op-ctx',
+      ]);
+
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
+      expect(mockSpawnAgent.mock.calls[0][0]).toMatchObject({ resumeSessionId: 'cc-longctx' });
+      expect(mockSpawnAgent.mock.calls[1][0].resumeSessionId).toBeUndefined();
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    });
+
+    it('does NOT retry on a non-resume error exit', async () => {
+      // Exit code 1 but no resume-related error message
+      mockSpawnAgent.mockReturnValueOnce(
+        createFakeHandle({ exitCode: 1, stderrChunks: ['rate limit exceeded\n'] }),
+      );
+
+      await runCmd([
+        'hetero',
+        'exec',
+        '--type',
+        'claude-code',
+        '--prompt',
+        'hi',
+        '--resume',
+        'cc-valid',
+      ]);
+
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('does NOT retry when --resume is not provided', async () => {
+      const errorEvent = {
+        data: { error: 'No conversation found', message: 'No conversation found' },
+        operationId: 'op-nr',
+        stepIndex: 0,
+        timestamp: 1,
+        type: 'error',
+      };
+      mockSpawnAgent.mockReturnValueOnce(createFakeHandle({ events: [errorEvent], exitCode: 1 }));
+
+      await runCmd([
+        'hetero',
+        'exec',
+        '--type',
+        'claude-code',
+        '--prompt',
+        'fresh run',
+        '--operation-id',
+        'op-nr',
+      ]);
+
+      // No --resume → no interception → no retry
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('does NOT suppress the resume-error event from JSONL output', async () => {
+      const resumeNotFoundEvent = {
+        data: {
+          error: 'No conversation found with session ID old',
+          message: 'No conversation found with session ID old',
+        },
+        operationId: 'op-jsonl',
+        stepIndex: 0,
+        timestamp: 1,
+        type: 'error',
+      };
+      mockSpawnAgent
+        .mockReturnValueOnce(createFakeHandle({ events: [resumeNotFoundEvent], exitCode: 1 }))
+        .mockReturnValueOnce(createFakeHandle({ exitCode: 0 }));
+
+      await runCmd([
+        'hetero',
+        'exec',
+        '--type',
+        'claude-code',
+        '--prompt',
+        'do thing',
+        '--resume',
+        'old',
+        '--render',
+        'jsonl',
+      ]);
+
+      // The error event is still emitted to JSONL (for observability) even
+      // though it was withheld from the ingester.
+      const lines = stdoutSpy.mock.calls
+        .map((c) => c[0])
+        .filter((s): s is string => typeof s === 'string');
+      const errorLine = lines.find((l) => {
+        try {
+          return JSON.parse(l).type === 'error';
+        } catch {
+          return false;
+        }
+      });
+      expect(errorLine).toBeDefined();
+    });
+  });
+
+  it('sends full text snapshots before tools and waits for finish until all server ingests ack', async () => {
+    const callOrder: string[] = [];
+    mockHeteroIngestMutate.mockImplementation(async ({ events }: any) => {
+      const first = events[0];
+      callOrder.push(`ingest:${first.type}:${first.data?.chunkType ?? 'terminal'}`);
+      return { ack: true };
+    });
+    mockHeteroFinishMutate.mockImplementation(async () => {
+      callOrder.push('finish');
+      return { ack: true };
+    });
+
+    mockSpawnAgent.mockReturnValue(
+      createFakeHandle({
+        events: [
+          {
+            data: { chunkType: 'text', content: 'hello ' },
+            operationId: 'op-server',
+            stepIndex: 0,
+            timestamp: 1,
+            type: 'stream_chunk',
+          },
+          {
+            data: { chunkType: 'text', content: 'world' },
+            operationId: 'op-server',
+            stepIndex: 0,
+            timestamp: 2,
+            type: 'stream_chunk',
+          },
+          {
+            data: {
+              chunkType: 'tools_calling',
+              toolsCalling: [
+                {
+                  apiName: 'Bash',
+                  arguments: '{"cmd":"ls"}',
+                  id: 'tc-1',
+                  identifier: 'bash',
+                  type: 'default',
+                },
+              ],
+            },
+            operationId: 'op-server',
+            stepIndex: 1,
+            timestamp: 3,
+            type: 'stream_chunk',
+          },
+          {
+            data: { reason: 'success' },
+            operationId: 'op-server',
+            stepIndex: 1,
+            timestamp: 4,
+            type: 'agent_runtime_end',
+          },
+        ],
+        exitCode: 0,
+      }),
+    );
+
+    await runCmd([
+      'hetero',
+      'exec',
+      '--type',
+      'claude-code',
+      '--prompt',
+      'hi',
+      '--topic',
+      'topic-1',
+      '--operation-id',
+      'op-server',
+      '--render',
+      'none',
+    ]);
+
+    expect(mockHeteroIngestMutate).toHaveBeenCalledTimes(3);
+    expect(mockHeteroIngestMutate.mock.calls[0][0].events[0].data).toMatchObject({
+      chunkType: 'text',
+      content: 'hello world',
+      snapshotMode: 'replace',
+      snapshotSeq: 1,
+    });
+    expect(callOrder).toEqual([
+      'ingest:stream_chunk:text',
+      'ingest:stream_chunk:tools_calling',
+      'ingest:agent_runtime_end:terminal',
+      'finish',
+    ]);
+  });
+
+  it('resets the per-message text accumulator at message boundaries (no cross-message duplication)', async () => {
+    // The `replace` snapshot accumulator must not span
+    // message boundaries. Two assistant messages separated by a
+    // stream_end/stream_start boundary must each snapshot only their OWN
+    // text — otherwise the second message re-emits the first's text verbatim.
+    const textSnapshots: string[] = [];
+    mockHeteroIngestMutate.mockImplementation(async ({ events }: any) => {
+      for (const e of events) {
+        if (e.type === 'stream_chunk' && e.data?.chunkType === 'text') {
+          textSnapshots.push(e.data.content);
+        }
+      }
+      return { ack: true };
+    });
+
+    mockSpawnAgent.mockReturnValue(
+      createFakeHandle({
+        events: [
+          {
+            data: { chunkType: 'text', content: 'first message' },
+            operationId: 'op-server',
+            stepIndex: 0,
+            timestamp: 1,
+            type: 'stream_chunk',
+          },
+          { data: {}, operationId: 'op-server', stepIndex: 0, timestamp: 2, type: 'stream_end' },
+          {
+            data: { newStep: true, provider: 'claude-code' },
+            operationId: 'op-server',
+            stepIndex: 1,
+            timestamp: 3,
+            type: 'stream_start',
+          },
+          {
+            data: { chunkType: 'text', content: 'second message' },
+            operationId: 'op-server',
+            stepIndex: 1,
+            timestamp: 4,
+            type: 'stream_chunk',
+          },
+          {
+            data: { reason: 'success' },
+            operationId: 'op-server',
+            stepIndex: 1,
+            timestamp: 5,
+            type: 'agent_runtime_end',
+          },
+        ],
+        exitCode: 0,
+      }),
+    );
+
+    await runCmd([
+      'hetero',
+      'exec',
+      '--type',
+      'claude-code',
+      '--prompt',
+      'hi',
+      '--topic',
+      'topic-1',
+      '--operation-id',
+      'op-server',
+      '--render',
+      'none',
+    ]);
+
+    // Second snapshot carries ONLY the second message — not "first messagesecond message".
+    expect(textSnapshots).toEqual(['first message', 'second message']);
+  });
+
+  it('forwards subagent text raw (no snapshot coalescing, no cross-scope pollution of main text)', async () => {
+    // Subagent text is emitted as ONE full block per turn and the server's
+    // subagent path *appends* it (no snapshot semantics). It must therefore
+    // bypass the main-agent `replace`-snapshot coalescing: folding it into the
+    // shared accumulator would (a) splice main text into the subagent message
+    // and (b) make the server append a replace-snapshot → duplicated content.
+    const ingested: any[] = [];
+    mockHeteroIngestMutate.mockImplementation(async ({ events }: any) => {
+      for (const e of events) ingested.push(e);
+      return { ack: true };
+    });
+
+    const subagent = { parentToolCallId: 'task-1', subagentMessageId: 'msg-sub-1' };
+
+    mockSpawnAgent.mockReturnValue(
+      createFakeHandle({
+        events: [
+          // Main-agent streamed text delta (coalesced).
+          {
+            data: { chunkType: 'text', content: 'hello ' },
+            operationId: 'op-server',
+            stepIndex: 0,
+            timestamp: 1,
+            type: 'stream_chunk',
+          },
+          // Subagent full-block text — must pass through untouched.
+          {
+            data: { chunkType: 'text', content: 'I checked the files.', subagent },
+            operationId: 'op-server',
+            stepIndex: 0,
+            timestamp: 2,
+            type: 'stream_chunk',
+          },
+          {
+            data: {
+              chunkType: 'tools_calling',
+              toolsCalling: [
+                {
+                  apiName: 'Bash',
+                  arguments: '{"cmd":"ls"}',
+                  id: 'tc-1',
+                  identifier: 'bash',
+                  type: 'default',
+                },
+              ],
+            },
+            operationId: 'op-server',
+            stepIndex: 1,
+            timestamp: 3,
+            type: 'stream_chunk',
+          },
+          {
+            data: { reason: 'success' },
+            operationId: 'op-server',
+            stepIndex: 1,
+            timestamp: 4,
+            type: 'agent_runtime_end',
+          },
+        ],
+        exitCode: 0,
+      }),
+    );
+
+    await runCmd([
+      'hetero',
+      'exec',
+      '--type',
+      'claude-code',
+      '--prompt',
+      'hi',
+      '--topic',
+      'topic-1',
+      '--operation-id',
+      'op-server',
+      '--render',
+      'none',
+    ]);
+
+    const textEvents = ingested.filter(
+      (e) => e.type === 'stream_chunk' && e.data?.chunkType === 'text',
+    );
+
+    // Subagent text forwarded verbatim: keeps its subagent tag, original
+    // content, and is NOT converted into a replace snapshot.
+    const subagentText = textEvents.find((e) => e.data?.subagent);
+    expect(subagentText).toBeDefined();
+    expect(subagentText.data.content).toBe('I checked the files.');
+    expect(subagentText.data.snapshotMode).toBeUndefined();
+
+    // Main snapshot is untainted by the subagent block.
+    const mainText = textEvents.find((e) => !e.data?.subagent);
+    expect(mainText).toBeDefined();
+    expect(mainText.data.content).toBe('hello ');
+    expect(mainText.data.snapshotMode).toBe('replace');
+    expect(mainText.data.content).not.toContain('I checked');
+  });
+
+  it('--raw-dump writes a session folder with meta.json, wires onRawStdout, and tees stderr', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'hetero-rawdump-'));
+
+    mockSpawnAgent.mockReturnValue(
+      createFakeHandle({
+        events: [
+          {
+            data: { chunkType: 'text', content: 'hi' },
+            operationId: 'op-raw',
+            stepIndex: 0,
+            timestamp: 1,
+            type: 'stream_chunk',
+          },
+        ],
+        exitCode: 0,
+        stderrChunks: ['warning: something happened\n'],
+      }),
+    );
+
+    await runCmd([
+      'hetero',
+      'exec',
+      '--type',
+      'claude-code',
+      '--prompt',
+      'hi',
+      '--operation-id',
+      'op-raw',
+      '--render',
+      'none',
+      '--raw-dump',
+      root,
+    ]);
+
+    // The raw stdout tee is handed to spawnAgent (the package captures the
+    // pre-adapter bytes — exercised in spawnAgent.test.ts).
+    expect(typeof mockSpawnAgent.mock.calls[0][0].onRawStdout).toBe('function');
+
+    // One session folder per exec, keyed by the operation id.
+    const sessions = await readdir(root);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toContain('op-raw');
+    const sessionDir = path.join(root, sessions[0]!);
+
+    const meta = JSON.parse(await readFile(path.join(sessionDir, 'meta.json'), 'utf8'));
+    expect(meta).toMatchObject({ agentType: 'claude-code', operationId: 'op-raw' });
+
+    // stderr is teed to the attempt's log file.
+    const stderrDump = await readFile(path.join(sessionDir, 'attempt-1.stderr.log'), 'utf8');
+    expect(stderrDump).toContain('warning: something happened');
   });
 });

@@ -13,6 +13,7 @@ import {
   formatSpeed,
   formatTime,
   formatTokenNumber,
+  formatUsageValue,
 } from './format';
 
 describe('format', () => {
@@ -138,7 +139,14 @@ describe('format', () => {
     it('should format numbers 10,000,000 and above correctly', () => {
       expect(formatShortenNumber(10000000)).toBe('10.0M');
       expect(formatShortenNumber(123456789)).toBe('123.5M');
-      expect(formatShortenNumber(9876543210)).toBe('9876.5M');
+    });
+
+    it('should format billions and trillions correctly', () => {
+      expect(formatShortenNumber(1000000000)).toBe('1.0B');
+      expect(formatShortenNumber(9876543210)).toBe('9.9B');
+      expect(formatShortenNumber(15065800000)).toBe('15.1B');
+      expect(formatShortenNumber(1000000000000)).toBe('1.0T');
+      expect(formatShortenNumber(2500000000000)).toBe('2.5T');
     });
   });
 
@@ -251,6 +259,31 @@ describe('format', () => {
       expect(formatTokenNumber(1048576)).toBe('1M'); // Gemini Flash
       expect(formatTokenNumber(2000000)).toBe('2M');
       expect(formatTokenNumber(2097152)).toBe('2M'); // Gemini Pro
+    });
+  });
+
+  describe('formatUsageValue', () => {
+    it('formats token usage details with short units', () => {
+      expect(formatUsageValue(93_405)).toBe('93.4K');
+      expect(formatUsageValue(92_119)).toBe('92.1K');
+      expect(formatUsageValue(3_488)).toBe('3.5K');
+      expect(formatUsageValue(189_018)).toBe('189K');
+    });
+
+    it('formats credit usage details with the same short units', () => {
+      expect(formatUsageValue(16_127)).toBe('16.1K');
+      expect(formatUsageValue(16_179)).toBe('16.2K');
+    });
+
+    it('keeps small token counts readable without suffixes', () => {
+      expect(formatUsageValue(0)).toBe('0');
+      expect(formatUsageValue(6)).toBe('6');
+      expect(formatUsageValue(999)).toBe('999');
+    });
+
+    it('formats million-level token counts with M suffix', () => {
+      expect(formatUsageValue(1_000_000)).toBe('1M');
+      expect(formatUsageValue(1_500_000)).toBe('1.5M');
     });
   });
 

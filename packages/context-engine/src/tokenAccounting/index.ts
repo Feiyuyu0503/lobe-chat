@@ -1,3 +1,4 @@
+// cspell:ignore tokenx
 import { estimateTokenCount } from 'tokenx';
 
 import type {
@@ -7,6 +8,8 @@ import type {
   TokenSourceType,
   ToolDefinitionTokenBreakdown,
 } from './types';
+
+export * from './attachmentTokenBuckets';
 
 export const DEFAULT_DRIFT_MULTIPLIER = 1.25;
 
@@ -102,9 +105,12 @@ export const countContextTokens = ({
     const bySource: Partial<Record<TokenSourceType, number>> = {};
 
     // Assistant fast-path: recorded usage covers content + tool_calls + reasoning
-    // produced by THIS turn's generation. Use it directly when available.
+    // produced by THIS turn's generation. Use it directly when available. Prefer
+    // the dedicated `usage` field, falling back to legacy `metadata.usage`.
     const recordedOutputTokens =
-      msg.role === 'assistant' ? msg.metadata?.usage?.totalOutputTokens : undefined;
+      msg.role === 'assistant'
+        ? (msg.usage?.totalOutputTokens ?? msg.metadata?.usage?.totalOutputTokens)
+        : undefined;
 
     if (recordedOutputTokens && recordedOutputTokens > 0) {
       bumpSource(bySource, 'content', recordedOutputTokens);

@@ -4,25 +4,26 @@ import { type HeterogeneousProviderConfig, type UserCredSummary } from '@lobecha
 import { Github } from '@lobehub/icons';
 import { Flexbox } from '@lobehub/ui';
 import { Avatar, Button, Input, Select, Spin, Tag, Typography } from 'antd';
-import { createStyles } from 'antd-style';
+import { createStaticStyles, cssVar } from 'antd-style';
 import { CheckCircle2, KeyRound, X } from 'lucide-react';
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
 
+import { useWorkspaceAwareNavigate } from '@/features/Workspace/useWorkspaceAwareNavigate';
+import { usePermission } from '@/hooks/usePermission';
 import { lambdaClient, lambdaQuery } from '@/libs/trpc/client';
 
 // Fixed cred key for Claude Code OAuth token — never changes
 const CLAUDE_TOKEN_CRED_KEY = 'CLAUDE_CODE_OAUTH_TOKEN';
 
-const useStyles = createStyles(({ css, token, cssVar }) => ({
+const styles = createStaticStyles(({ css }) => ({
   card: css`
     padding-block: 16px 12px;
     padding-inline: 16px;
-    border: 1px solid ${token.colorBorderSecondary};
-    border-radius: ${token.borderRadiusLG}px;
+    border: 1px solid ${cssVar.colorBorderSecondary};
+    border-radius: ${cssVar.borderRadiusLG};
 
-    background: ${token.colorBgContainer};
+    background: ${cssVar.colorBgContainer};
   `,
   credOption: css`
     display: flex;
@@ -48,12 +49,12 @@ const useStyles = createStyles(({ css, token, cssVar }) => ({
     min-height: 36px;
     padding-block: 6px;
     padding-inline: 8px;
-    border-radius: ${token.borderRadiusSM}px;
+    border-radius: ${cssVar.borderRadiusSM};
 
     transition: background 0.15s;
 
     &:hover {
-      background: ${token.colorFillTertiary};
+      background: ${cssVar.colorFillTertiary};
 
       .repo-delete-btn {
         opacity: 1;
@@ -61,7 +62,7 @@ const useStyles = createStyles(({ css, token, cssVar }) => ({
     }
   `,
   repoItemActive: css`
-    background: ${token.colorFillSecondary};
+    background: ${cssVar.colorFillSecondary};
   `,
   repoDeleteBtn: css`
     cursor: pointer;
@@ -73,7 +74,7 @@ const useStyles = createStyles(({ css, token, cssVar }) => ({
     border: none;
     border-radius: 4px;
 
-    color: ${token.colorTextTertiary};
+    color: ${cssVar.colorTextTertiary};
 
     opacity: 0;
     background: transparent;
@@ -83,7 +84,7 @@ const useStyles = createStyles(({ css, token, cssVar }) => ({
       color 0.15s;
 
     &:hover {
-      color: ${token.colorError};
+      color: ${cssVar.colorError};
     }
   `,
   repoList: css`
@@ -93,15 +94,15 @@ const useStyles = createStyles(({ css, token, cssVar }) => ({
   `,
   sectionDesc: css`
     font-size: 12px;
-    color: ${token.colorTextSecondary};
+    color: ${cssVar.colorTextSecondary};
   `,
   sectionDivider: css`
     margin-block: 12px;
-    border-block-start: 1px solid ${token.colorBorderSecondary};
+    border-block-start: 1px solid ${cssVar.colorBorderSecondary};
   `,
   sectionLabel: css`
     font-size: 12px;
-    color: ${token.colorTextTertiary};
+    color: ${cssVar.colorTextTertiary};
     text-transform: uppercase;
     letter-spacing: 0.04em;
   `,
@@ -121,12 +122,14 @@ interface TokenSectionProps {
 
 const TokenSection = memo<TokenSectionProps>(({ existingCred, onSaved, onEnvChange }) => {
   const { t } = useTranslation('setting');
-  const { styles } = useStyles();
+  const { allowed: canEdit } = usePermission('edit_own_content');
   const [editing, setEditing] = useState(!existingCred);
   const [tokenInput, setTokenInput] = useState('');
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
+    if (!canEdit) return;
+
     const token = tokenInput.trim();
     if (!token) return;
     setSaving(true);
@@ -154,7 +157,14 @@ const TokenSection = memo<TokenSectionProps>(({ existingCred, onSaved, onEnvChan
           <span className={styles.sectionLabel}>{t('heterogeneousStatus.cloud.tokenLabel')}</span>
         </Flexbox>
         {existingCred && !editing && (
-          <span className={styles.manageLink} onClick={() => setEditing(true)}>
+          <span
+            className={styles.manageLink}
+            onClick={() => {
+              if (!canEdit) return;
+
+              setEditing(true);
+            }}
+          >
             {t('heterogeneousStatus.cloud.tokenChange')}
           </span>
         )}
@@ -174,13 +184,14 @@ const TokenSection = memo<TokenSectionProps>(({ existingCred, onSaved, onEnvChan
         <Flexbox horizontal gap={8}>
           <Input.Password
             autoFocus={!!existingCred}
+            disabled={!canEdit}
             placeholder={t('heterogeneousStatus.cloud.tokenPlaceholder')}
             style={{ flex: 1 }}
             value={tokenInput}
             onChange={(e) => setTokenInput(e.target.value)}
             onPressEnter={handleSave}
           />
-          <Button loading={saving} type="primary" onClick={handleSave}>
+          <Button disabled={!canEdit} loading={saving} type="primary" onClick={handleSave}>
             {t('heterogeneousStatus.cloud.tokenSave')}
           </Button>
           {existingCred && (
@@ -211,10 +222,12 @@ interface RepoListSectionProps {
 
 const RepoListSection = memo<RepoListSectionProps>(({ repos, onReposChange }) => {
   const { t } = useTranslation('setting');
-  const { styles } = useStyles();
+  const { allowed: canEdit } = usePermission('edit_own_content');
   const [input, setInput] = useState('');
 
   const addRepo = () => {
+    if (!canEdit) return;
+
     const v = input.trim();
     if (!v || repos.includes(v)) return;
     onReposChange([...repos, v]);
@@ -223,6 +236,8 @@ const RepoListSection = memo<RepoListSectionProps>(({ repos, onReposChange }) =>
 
   const removeRepo = (repo: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!canEdit) return;
+
     onReposChange(repos.filter((r) => r !== repo));
   };
 
@@ -240,6 +255,7 @@ const RepoListSection = memo<RepoListSectionProps>(({ repos, onReposChange }) =>
               </Typography.Text>
               <button
                 className={`${styles.repoDeleteBtn} repo-delete-btn`}
+                disabled={!canEdit}
                 onClick={(e) => removeRepo(repo, e)}
               >
                 <X size={12} />
@@ -251,13 +267,16 @@ const RepoListSection = memo<RepoListSectionProps>(({ repos, onReposChange }) =>
 
       <Flexbox horizontal gap={8}>
         <Input
+          disabled={!canEdit}
           placeholder={t('heterogeneousStatus.cloud.repoPlaceholder')}
           style={{ flex: 1 }}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onPressEnter={addRepo}
         />
-        <Button onClick={addRepo}>{t('heterogeneousStatus.cloud.repoAdd')}</Button>
+        <Button disabled={!canEdit} onClick={addRepo}>
+          {t('heterogeneousStatus.cloud.repoAdd')}
+        </Button>
       </Flexbox>
 
       <span className={styles.sectionDesc}>{t('heterogeneousStatus.cloud.repoDesc')}</span>
@@ -269,8 +288,8 @@ const RepoListSection = memo<RepoListSectionProps>(({ repos, onReposChange }) =>
 const CloudHeterogeneousConfig = memo<CloudHeterogeneousConfigProps>(
   ({ provider, onEnvChange }) => {
     const { t } = useTranslation('setting');
-    const { styles } = useStyles();
-    const navigate = useNavigate();
+    const navigate = useWorkspaceAwareNavigate();
+    const { allowed: canEdit } = usePermission('edit_own_content');
 
     const currentEnv = provider.env ?? {};
     const storedGithubCredKey = currentEnv.GITHUB_CRED_KEY ?? '';
@@ -295,6 +314,8 @@ const CloudHeterogeneousConfig = memo<CloudHeterogeneousConfigProps>(
     );
 
     const saveEnv = (patch: Record<string, string>) => {
+      if (!canEdit) return;
+
       void onEnvChange({ ...currentEnv, ...patch });
     };
 
@@ -338,6 +359,7 @@ const CloudHeterogeneousConfig = memo<CloudHeterogeneousConfigProps>(
 
             <Select
               allowClear
+              disabled={!canEdit}
               placeholder={t('heterogeneousStatus.cloud.githubPlaceholder')}
               style={{ width: '100%' }}
               value={storedGithubCredKey || undefined}

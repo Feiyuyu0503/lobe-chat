@@ -1,4 +1,6 @@
+import { CUSTOM_FOLDER_FILE_TYPE, DERIVED_DOCUMENT_SOURCE_TYPE } from '@lobechat/const';
 import { copyToClipboard, createRawModal, Icon } from '@lobehub/ui';
+import { confirmModal } from '@lobehub/ui/base-ui';
 import { App } from 'antd';
 import { type ItemType } from 'antd/es/menu/interface';
 import {
@@ -18,6 +20,7 @@ import RepoIcon from '@/components/LibIcon';
 import { useKnowledgeBaseListContext } from '@/features/ResourceManager/components/KnowledgeBaseListProvider';
 import { PAGE_FILE_TYPE } from '@/features/ResourceManager/constants';
 import { useAppOrigin } from '@/hooks/useAppOrigin';
+import { usePermission } from '@/hooks/usePermission';
 import { documentService } from '@/services/document';
 import { useFileStore } from '@/store/file';
 import { useKnowledgeBaseStore } from '@/store/library';
@@ -54,8 +57,9 @@ export const useFileItemDropdown = ({
   onRenameStart,
 }: UseFileItemDropdownParams): UseFileItemDropdownReturn => {
   const { t } = useTranslation(['components', 'common', 'knowledgeBase']);
-  const { message, modal } = App.useApp();
+  const { message } = App.useApp();
   const appOrigin = useAppOrigin();
+  const { allowed: canEditResources } = usePermission('edit_own_content');
 
   const { deleteResource, moveResource, refreshFileList } = useFileStore(
     (s) => ({
@@ -72,7 +76,7 @@ export const useFileItemDropdown = ({
   const libraries = useKnowledgeBaseListContext();
 
   const isInLibrary = !!libraryId;
-  const isFolder = fileType === 'custom/folder';
+  const isFolder = fileType === CUSTOM_FOLDER_FILE_TYPE;
   // PDF and Office files should not be treated as pages
   const lowerFilename = filename?.toLowerCase();
   const isPDF = fileType?.toLowerCase() === 'pdf' || lowerFilename?.endsWith('.pdf');
@@ -85,7 +89,9 @@ export const useFileItemDropdown = ({
     lowerFilename?.endsWith('.pptx') ||
     lowerFilename?.endsWith('.odt');
   const isPage =
-    !isPDF && !isOfficeFile && (sourceType === 'document' || fileType === PAGE_FILE_TYPE);
+    !isPDF &&
+    !isOfficeFile &&
+    (sourceType === DERIVED_DOCUMENT_SOURCE_TYPE || fileType === PAGE_FILE_TYPE);
 
   const menuItems = useCallback(() => {
     // Filter out current knowledge base and create submenu items
@@ -153,45 +159,50 @@ export const useFileItemDropdown = ({
     }));
 
     const libraryRelatedActions = (
-      isInLibrary
-        ? [
-            availableKnowledgeBases.length > 0 && {
-              children: moveToKnowledgeBaseSubmenu,
-              icon: <Icon icon={BookPlusIcon} />,
-              key: 'moveToOtherLibrary',
-              label: t('FileManager.actions.moveToOtherLibrary'),
-            },
-            {
-              icon: <Icon icon={BookMinusIcon} />,
-              key: 'removeFromLibrary',
-              label: t('FileManager.actions.removeFromLibrary'),
-              onClick: async ({ domEvent }) => {
-                domEvent.stopPropagation();
-
-                modal.confirm({
-                  okButtonProps: {
-                    danger: true,
-                  },
-                  onOk: async () => {
-                    await removeFilesFromKnowledgeBase(libraryId, [id]);
-
-                    message.success(t('FileManager.actions.removeFromLibrarySuccess'));
-                  },
-                  title: t('FileManager.actions.confirmRemoveFromLibrary', {
-                    count: 1,
-                  }),
-                });
+      !canEditResources
+        ? []
+        : isInLibrary
+          ? [
+              availableKnowledgeBases.length > 0 && {
+                children: moveToKnowledgeBaseSubmenu,
+                icon: <Icon icon={BookPlusIcon} />,
+                key: 'moveToOtherLibrary',
+                label: t('FileManager.actions.moveToOtherLibrary'),
               },
-            },
-          ]
-        : [
-            availableKnowledgeBases.length > 0 && {
-              children: addToKnowledgeBaseSubmenu,
-              icon: <Icon icon={BookPlusIcon} />,
-              key: 'addToLibrary',
-              label: t('FileManager.actions.addToLibrary'),
-            },
-          ]
+              {
+                icon: <Icon icon={BookMinusIcon} />,
+                key: 'removeFromLibrary',
+                label: t('FileManager.actions.removeFromLibrary'),
+                onClick: async ({ domEvent }) => {
+                  domEvent.stopPropagation();
+
+                  confirmModal({
+                    cancelText: t('cancel', { ns: 'common' }),
+                    content: t('FileManager.actions.confirmRemoveFromLibrary', {
+                      count: 1,
+                    }),
+                    okButtonProps: {
+                      danger: true,
+                    },
+                    okText: t('FileManager.actions.removeFromLibrary'),
+                    onOk: async () => {
+                      await removeFilesFromKnowledgeBase(libraryId, [id]);
+
+                      message.success(t('FileManager.actions.removeFromLibrarySuccess'));
+                    },
+                    title: t('FileManager.actions.removeFromLibrary'),
+                  });
+                },
+              },
+            ]
+          : [
+              availableKnowledgeBases.length > 0 && {
+                children: addToKnowledgeBaseSubmenu,
+                icon: <Icon icon={BookPlusIcon} />,
+                key: 'addToLibrary',
+                label: t('FileManager.actions.addToLibrary'),
+              },
+            ]
     ) as ItemType[];
 
     const hasKnowledgeBaseActions = libraryRelatedActions.some(Boolean);
@@ -202,28 +213,30 @@ export const useFileItemDropdown = ({
         hasKnowledgeBaseActions && {
           type: 'divider',
         },
-        isInLibrary && {
-          icon: <Icon icon={FolderInputIcon} />,
-          key: 'moveToFolder',
-          label: t('FileManager.actions.moveToFolder'),
-          onClick: async ({ domEvent }) => {
-            domEvent.stopPropagation();
+        canEditResources &&
+          isInLibrary && {
+            icon: <Icon icon={FolderInputIcon} />,
+            key: 'moveToFolder',
+            label: t('FileManager.actions.moveToFolder'),
+            onClick: async ({ domEvent }) => {
+              domEvent.stopPropagation();
 
-            createRawModal(MoveToFolderModal, {
-              fileId: id,
-              knowledgeBaseId: libraryId,
-            });
+              createRawModal(MoveToFolderModal, {
+                fileId: id,
+                knowledgeBaseId: libraryId,
+              });
+            },
           },
-        },
-        isFolder && {
-          icon: <Icon icon={PencilIcon} />,
-          key: 'rename',
-          label: t('FileManager.actions.rename'),
-          onClick: async ({ domEvent }) => {
-            domEvent.stopPropagation();
-            onRenameStart?.();
+        canEditResources &&
+          isFolder && {
+            icon: <Icon icon={PencilIcon} />,
+            key: 'rename',
+            label: t('FileManager.actions.rename'),
+            onClick: async ({ domEvent }) => {
+              domEvent.stopPropagation();
+              onRenameStart?.();
+            },
           },
-        },
         {
           icon: <Icon icon={LinkIcon} />,
           key: 'copyUrl',
@@ -291,21 +304,22 @@ export const useFileItemDropdown = ({
             message.destroy(key);
           },
         },
-        {
+        canEditResources && {
           type: 'divider',
         },
-        {
+        canEditResources && {
           danger: true,
           icon: <Icon icon={Trash} />,
           key: 'delete',
           label: t('delete', { ns: 'common' }),
           onClick: async ({ domEvent }) => {
             domEvent.stopPropagation();
-            modal.confirm({
+            confirmModal({
               content: isFolder
                 ? t('FileManager.actions.confirmDeleteFolder')
                 : t('FileManager.actions.confirmDelete'),
               okButtonProps: { danger: true },
+              title: t('delete', { ns: 'common' }),
               onOk: async () => {
                 // Use optimistic delete - instant UI update, sync in background
                 await deleteResource(id);
@@ -326,6 +340,7 @@ export const useFileItemDropdown = ({
   }, [
     addFilesToKnowledgeBase,
     appOrigin,
+    canEditResources,
     deleteResource,
     filename,
     id,
@@ -335,7 +350,6 @@ export const useFileItemDropdown = ({
     libraries,
     libraryId,
     message,
-    modal,
     moveResource,
     onRenameStart,
     refreshFileList,
